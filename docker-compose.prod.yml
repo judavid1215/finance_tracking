@@ -1,0 +1,26 @@
+# Uso real (y futura Raspberry Pi 5). Sin código montado, reinicio automático.
+name: finanzas
+
+services:
+  app:
+    build:
+      context: .
+      target: prod
+    image: finanzas:latest
+    init: true
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_PATH: /data/db/finanzas.sqlite3
+    # 0.0.0.0 en el host para que Tailscale (instalado en el host) llegue a la app.
+    ports:
+      - "8000:8000"
+    volumes:
+      - data:/data
+
+volumes:
+  data:
+    # Volumen distinto del de desarrollo: los datos reales nunca se mezclan con los de pruebas.
+    name: finanzas_prod_data

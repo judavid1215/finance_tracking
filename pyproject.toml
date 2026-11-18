@@ -1,0 +1,38 @@
+[project]
+name = "finanzas"
+# Mantener sincronizada con src/finanzas/__init__.py (__version__).
+version = "0.1.0"
+description = "Seguimiento personal de inversiones"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    "apscheduler>=3.10.4,<4",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "pytest>=8",
+    "debugpy>=1.8",
+]
+
+[tool.uv]
+# Aplicación, no librería: no se instala como paquete; el código se importa vía PYTHONPATH=src.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
