@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS precios (
     precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
     UNIQUE (instrumento_id, fecha)
 );
+
+-- Tipo de cambio a euros: cuántos EUR vale 1 unidad de la divisa en esa fecha (ej. USD 0.92).
+CREATE TABLE IF NOT EXISTS tipos_cambio (
+    divisa  TEXT NOT NULL CHECK (length(divisa) = 3 AND divisa != 'EUR'),
+    fecha   TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
+    tasa    TEXT NOT NULL CHECK (CAST(tasa AS REAL) > 0),
+    PRIMARY KEY (divisa, fecha)
+);
 """
 
 _VISTAS = """

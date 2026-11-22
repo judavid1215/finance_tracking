@@ -7,7 +7,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
 
-from finanzas import cartera, compras, db, instrumentos, precios, quefondos, ventas, yahoo  # noqa: E402
+from finanzas import (  # noqa: E402
+    actualizacion,
+    cartera,
+    compras,
+    db,
+    instrumentos,
+    precios,
+    quefondos,
+    ventas,
+)
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
@@ -27,7 +36,7 @@ MENU = """
 11) Listar ventas (todas o de un instrumento)
 12) Borrar venta por id
 --- Cartera ---
-8) Resumen por instrumento
+8) Resumen por instrumento y total en EUR
 9) Poner precio actual
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
@@ -61,7 +70,7 @@ def mostrar_cartera(filas):
     for f in filas:
         linea = (
             f"{f['instrumento']:<20} | {f['participaciones']} part. | "
-            f"invertido {f['invertido']:.2f} | precio medio {f['precio_medio']:.4f}"
+            f"invertido {f['invertido']:.2f} {f['divisa']} | precio medio {f['precio_medio']:.4f}"
         )
         if f["valor_actual"] is not None:
             linea += (
@@ -69,6 +78,24 @@ def mostrar_cartera(filas):
                 f"({f['rentabilidad']:+.1%})"
             )
         print(linea)
+
+
+def mostrar_total(t):
+    if t["valor"] is None:
+        print("TOTAL en EUR: nada valorado todavía (faltan precios o tipos de cambio)")
+    else:
+        rent = f" ({t['rentabilidad']:+.1%})" if t["rentabilidad"] is not None else ""
+        print(
+            f"TOTAL en EUR: invertido {t['invertido']:.2f} | valor {t['valor']:.2f} | "
+            f"ganancia {t['ganancia']:+.2f}{rent}"
+        )
+    for nombre, motivo in t["excluidos"]:
+        print(f"  no cuenta en el total: {nombre} ({motivo})")
+
+
+def resumen_cartera(conn):
+    mostrar_cartera(cartera.resumen(conn))
+    mostrar_total(cartera.total(conn))
 
 
 def pedir_entero(texto):
@@ -159,19 +186,31 @@ def poner_identificador(conn):
 
 
 def actualizar_todos(conn):
-    for inst in instrumentos.listar(conn):
-        if inst["id_tipo"] == "DGS":
-            modulo = quefondos
-        elif inst["id_tipo"] in yahoo.TIPOS_ID:
-            modulo = yahoo
+    res = actualizacion.actualizar_todos(conn)
+    ok = errores = omitidos = antiguos = 0
+    for f in res["filas"]:
+        if f["estado"] == "ok":
+            ok += 1
+            aviso = ""
+            if f["antiguo"]:
+                antiguos += 1
+                aviso = "  <-- ANTIGUO"
+            print(f"{f['nombre']}: {f['precio']} a {f['fecha']:%d-%m-%Y}{aviso}")
+        elif f["estado"] == "error":
+            errores += 1
+            print(f"{f['nombre']}: no se pudo ({f['mensaje']})")
         else:
-            print(f"{inst['nombre']}: se omite (sin identificador)")
-            continue
-        try:
-            fecha, precio = modulo.actualizar(conn, inst["id"])
-            print(f"{inst['nombre']}: {precio} a {fecha:%d-%m-%Y}")
-        except (ValueError, OSError) as e:
-            print(f"{inst['nombre']}: no se pudo ({e})")
+            omitidos += 1
+            print(f"{f['nombre']}: se omite ({f['mensaje']})")
+    for d in res["divisas"]:
+        if d["estado"] == "ok":
+            print(f"{d['divisa']}/EUR: {d['tasa']} a {d['fecha']:%d-%m-%Y}")
+        else:
+            print(f"{d['divisa']}/EUR: no se pudo ({d['mensaje']})")
+    print(
+        f"Resumen: {ok} actualizados ({antiguos} con precio antiguo), {errores} con error, "
+        f"{omitidos} omitidos; {res['sin_posicion']} sin participaciones (no se tocan)"
+    )
 
 
 def listar_compras(conn):
@@ -196,7 +235,7 @@ def main():
         "5": lambda: anadir_compra(conn),
         "6": lambda: listar_compras(conn),
         "7": lambda: borrar_con_id(conn, compras),
-        "8": lambda: mostrar_cartera(cartera.resumen(conn)),
+        "8": lambda: resumen_cartera(conn),
         "9": lambda: poner_precio(conn),
         "10": lambda: anadir_venta(conn),
         "11": lambda: listar_ventas(conn),

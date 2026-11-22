@@ -13,7 +13,11 @@ Qué hay (en `src/finanzas/`):
   una venta no cambia la posición, solo se guarda.
 - `precios.py`: guarda el precio de un instrumento por fecha (a mano o automático).
 - `yahoo.py` y `quefondos.py`: descargan el precio actual (ver "De dónde salen los precios").
-- `cartera.py`: resumen de lo que hay en cartera.
+- `cartera.py`: resumen de lo que hay en cartera y su total en euros (`total`).
+- `divisas.py`: tipos de cambio a euros desde Yahoo (`USDEUR=X`).
+- `actualizacion.py`: actualiza de una vez el precio de todo lo que tienes (opción 14). Solo toca
+  instrumentos con participaciones, sigue si uno falla, marca los precios con más de 5 días
+  como antiguos, baja el tipo de cambio de las divisas que uses y termina con un resumen.
 
 Para probar a mano: `python main.py` (menú de consola).
 
@@ -41,7 +45,15 @@ de unos días antes.
 
 No incluido todavía: cálculo de impuestos (en España las ventas se imputan por FIFO, se hará
 cuando se aborde; ahí se restará la comisión de venta al ingreso), traspasos entre fondos ni
-cambio de divisa.
+operaciones de cambio de divisa.
+
+## Total en euros
+
+La opción 8 acaba con el total de la cartera en euros. Convierte con el último tipo de cambio
+guardado (opción 14 lo descarga de Yahoo), tanto el valor como lo invertido: lo invertido en
+dólares se ve a lo que vale hoy el dólar, no a lo que valía al comprar, así que la ganancia
+incluye el efecto de la divisa solo desde hoy. Lo que no tenga precio, o tipo de cambio si no
+está en euros, no cuenta en el total y se lista aparte.
 
 Las bases creadas antes de existir las comisiones se actualizan solas al conectar (la columna
 `comision` se añade y las filas antiguas quedan a 0).
