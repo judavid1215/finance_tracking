@@ -4,13 +4,15 @@ import sqlite3
 
 TIPOS = ("Fondo", "ETF", "Accion", "Cripto", "Plan_pensiones")
 
-# Qué identificador exige cada tipo. Cripto no pide ninguno por ahora.
+# Qué identificador lleva cada tipo. En Cripto es opcional (ticker de Yahoo, ej. BTC-EUR).
 IDENTIFICADOR_POR_TIPO = {
+    "Cripto": "TICKER",
     "Fondo": "ISIN",
     "ETF": "ISIN",
     "Plan_pensiones": "DGS",
     "Accion": "TICKER",
 }
+OPCIONALES = ("Cripto",)
 
 _SELECT = """
 SELECT i.*, d.tipo AS id_tipo, d.valor AS identificador
@@ -29,7 +31,8 @@ def anadir(
 ) -> int:
     """Inserta un instrumento con su identificador y devuelve su id.
 
-    Fondo y ETF exigen ISIN, Plan_pensiones exige DGS y Accion exige TICKER.
+    Fondo y ETF exigen ISIN, Plan_pensiones exige DGS y Accion exige TICKER; Cripto admite
+    un TICKER opcional (para el precio automático).
     Lanza ValueError si falta el identificador, o si el nombre o el identificador ya existen,
     y sqlite3.IntegrityError si el tipo o la divisa no son válidos.
     Todo se guarda junto o no se guarda nada.
@@ -38,14 +41,14 @@ def anadir(
     tipo = normalizar_tipo(tipo)
     tipo_id = IDENTIFICADOR_POR_TIPO.get(tipo)
     valor = (identificador or "").strip().upper()
-    if tipo_id and not valor:
+    if tipo_id and not valor and tipo not in OPCIONALES:
         raise ValueError(f"Un instrumento de tipo {tipo} necesita {tipo_id}")
     try:
         cur = conn.execute(
             "INSERT INTO instrumentos (nombre, tipo, divisa) VALUES (?, ?, ?)",
             (nombre, tipo, divisa),
         )
-        if tipo_id:
+        if tipo_id and valor:
             conn.execute(
                 "INSERT INTO identificadores (instrumento_id, tipo, valor) VALUES (?, ?, ?)",
                 (cur.lastrowid, tipo_id, valor),
@@ -59,6 +62,31 @@ def anadir(
         raise
     conn.commit()
     return cur.lastrowid
+
+
+def asignar_identificador(conn: sqlite3.Connection, id: int, valor: str) -> None:
+    """Pone o cambia el identificador de un instrumento existente (ej. BTC-EUR a un Bitcoin).
+
+    Lanza ValueError si el instrumento no existe, no admite identificador o el valor ya
+    lo tiene otro instrumento.
+    """
+    inst = obtener(conn, id)
+    if inst is None:
+        raise ValueError("No existe ese instrumento")
+    tipo_id = IDENTIFICADOR_POR_TIPO.get(inst["tipo"])
+    valor = valor.strip().upper()
+    if not tipo_id or not valor:
+        raise ValueError("Instrumento sin identificador o valor vacío")
+    try:
+        conn.execute("DELETE FROM identificadores WHERE instrumento_id = ?", (id,))
+        conn.execute(
+            "INSERT INTO identificadores (instrumento_id, tipo, valor) VALUES (?, ?, ?)",
+            (id, tipo_id, valor),
+        )
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise ValueError(f"Ya existe un instrumento con {tipo_id} {valor}") from None
+    conn.commit()
 
 
 def borrar(conn: sqlite3.Connection, id: int) -> bool:

@@ -1,7 +1,9 @@
-"""Rellena la base con datos inventados: Bitcoin, MSCI World, S&P 500, NVIDIA y Apple.
+"""Rellena la base con datos inventados: Bitcoin, MSCI World, S&P 500, NVIDIA, Apple
+y un plan de pensiones.
 
 Uso: python scripts/rellenar_datos.py
-Los ISIN, precios e importes son inventados (los tickers son reales). Cada instrumento recibe
+Los precios e importes son inventados (los ISIN de los ETF, los tickers y el código DGS del
+plan son reales). Cada instrumento recibe
 12 compras mensuales y 2 ventas, con comisiones del 0–1 % en la divisa del instrumento.
 Si un instrumento ya existe, no se toca ni se le añaden compras ni ventas (así se puede
 ejecutar varias veces sin duplicar).
@@ -20,14 +22,15 @@ from finanzas import compras, db, instrumentos, precios, ventas  # noqa: E402
 
 RUTA_DB = RAIZ / "data" / "finanzas.sqlite3"
 
-# nombre, tipo, divisa, identificador (ISIN inventado o ticker), precio inicial,
+# nombre, tipo, divisa, identificador (ISIN, ticker o código DGS), precio inicial,
 # decimales de participaciones
 CARTERAS = [
-    ("Bitcoin", "Cripto", "EUR", None, Decimal("30000"), 8),
-    ("MSCI World", "ETF", "EUR", "IE00FAKE0001", Decimal("85"), 4),
-    ("S&P 500", "ETF", "EUR", "IE00FAKE0002", Decimal("110"), 4),
+    ("Bitcoin", "Cripto", "EUR", "BTC-EUR", Decimal("30000"), 8),
+    ("MSCI World", "ETF", "EUR", "IE00BYX5NX33", Decimal("85"), 4),
+    ("S&P 500", "ETF", "EUR", "IE00B5BMR087", Decimal("110"), 4),
     ("NVIDIA", "Accion", "USD", "NVDA", Decimal("120"), 4),
     ("Apple", "Accion", "USD", "AAPL", Decimal("180"), 4),
+    ("MyInvestor Indexado Global PP", "Plan_pensiones", "EUR", "N5396", Decimal("19"), 4),
 ]
 MESES = 12  # una compra al mes, terminando en el mes actual
 MESES_CON_VENTA = (7, 3)  # meses atrás en los que, además de comprar, se vende una parte

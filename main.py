@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
 
-from finanzas import cartera, compras, db, instrumentos, precios, ventas  # noqa: E402
+from finanzas import cartera, compras, db, instrumentos, precios, quefondos, ventas, yahoo  # noqa: E402
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
@@ -29,6 +29,9 @@ MENU = """
 --- Cartera ---
 8) Resumen por instrumento
 9) Poner precio actual
+13) Actualizar precio de un plan de pensiones (web)
+15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
+14) Actualizar precios de todo lo que se pueda (fondos, ETF, acciones y planes)
 --- ---
 0) Salir
 """
@@ -84,7 +87,8 @@ def anadir_instrumento(conn):
     identificador = None
     pide = instrumentos.IDENTIFICADOR_POR_TIPO.get(instrumentos.normalizar_tipo(tipo))
     if pide:
-        identificador = input(f"{pide}: ").strip()
+        opcional = " (vacío = ninguno)" if tipo.strip().lower() == "cripto" else ""
+        identificador = input(f"{pide}{opcional}: ").strip()
     print("Añadido con id", instrumentos.anadir(conn, nombre, tipo, divisa, identificador))
 
 
@@ -132,6 +136,44 @@ def poner_precio(conn):
     print("Guardado")
 
 
+def actualizar_plan(conn):
+    mostrar_instrumentos(instrumentos.listar(conn, "Plan_pensiones"))
+    instrumento_id = pedir_entero("Id del plan: ")
+    if instrumento_id is None:
+        return
+    try:
+        fecha, precio = quefondos.actualizar(conn, instrumento_id)
+    except OSError as e:
+        print(f"No se pudo descargar: {e}")
+        return
+    print(f"Guardado: {precio} a {fecha:%d-%m-%Y}")
+
+
+def poner_identificador(conn):
+    mostrar_instrumentos(instrumentos.listar(conn))
+    instrumento_id = pedir_entero("Id del instrumento: ")
+    if instrumento_id is None:
+        return
+    instrumentos.asignar_identificador(conn, instrumento_id, input("Identificador: "))
+    print("Guardado")
+
+
+def actualizar_todos(conn):
+    for inst in instrumentos.listar(conn):
+        if inst["id_tipo"] == "DGS":
+            modulo = quefondos
+        elif inst["id_tipo"] in yahoo.TIPOS_ID:
+            modulo = yahoo
+        else:
+            print(f"{inst['nombre']}: se omite (sin identificador)")
+            continue
+        try:
+            fecha, precio = modulo.actualizar(conn, inst["id"])
+            print(f"{inst['nombre']}: {precio} a {fecha:%d-%m-%Y}")
+        except (ValueError, OSError) as e:
+            print(f"{inst['nombre']}: no se pudo ({e})")
+
+
 def listar_compras(conn):
     texto = input("Id de instrumento (vacío = todos): ").strip()
     mostrar_compras(compras.listar(conn, int(texto) if texto else None))
@@ -159,6 +201,9 @@ def main():
         "10": lambda: anadir_venta(conn),
         "11": lambda: listar_ventas(conn),
         "12": lambda: borrar_con_id(conn, ventas),
+        "13": lambda: actualizar_plan(conn),
+        "14": lambda: actualizar_todos(conn),
+        "15": lambda: poner_identificador(conn),
     }
     while True:
         print(MENU)
