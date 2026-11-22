@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS compras (
 );
 CREATE INDEX IF NOT EXISTS ix_compras_instrumento ON compras(instrumento_id);
 
+-- Precio de mercado de un instrumento en una fecha (a mano). Uno por instrumento y día.
+CREATE TABLE IF NOT EXISTS precios (
+    id              INTEGER PRIMARY KEY,
+    instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id) ON DELETE CASCADE,
+    fecha           TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
+    precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
+    UNIQUE (instrumento_id, fecha)
+);
+
 -- Vistas para consultar en DB Browser. Se recrean en cada conexión para que los cambios
 -- de definición se apliquen también a bases ya existentes.
 DROP VIEW IF EXISTS compras_detalle;

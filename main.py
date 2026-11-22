@@ -2,12 +2,12 @@
 
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
 
-from finanzas import cartera, compras, db, instrumentos  # noqa: E402
+from finanzas import cartera, compras, db, instrumentos, precios  # noqa: E402
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
@@ -24,6 +24,7 @@ MENU = """
 7) Borrar compra por id
 --- Cartera ---
 8) Resumen por instrumento
+9) Poner precio actual
 --- ---
 0) Salir
 """
@@ -51,10 +52,16 @@ def mostrar_cartera(filas):
     if not filas:
         print("(vacío)")
     for f in filas:
-        print(
+        linea = (
             f"{f['instrumento']:<20} | {f['participaciones']} part. | "
             f"invertido {f['invertido']:.2f} | precio medio {f['precio_medio']:.4f}"
         )
+        if f["valor_actual"] is not None:
+            linea += (
+                f" | valor {f['valor_actual']:.2f} | ganancia {f['ganancia']:+.2f} "
+                f"({f['rentabilidad']:+.1%})"
+            )
+        print(linea)
 
 
 def pedir_entero(texto):
@@ -89,6 +96,17 @@ def anadir_compra(conn):
     print("Añadida con id", compras.anadir(conn, instrumento_id, fecha, participaciones, precio))
 
 
+def poner_precio(conn):
+    mostrar_instrumentos(instrumentos.listar(conn))
+    instrumento_id = pedir_entero("Id del instrumento: ")
+    if instrumento_id is None:
+        return
+    texto = input("Fecha (DD-MM-AAAA, vacío = hoy): ").strip()
+    fecha = datetime.strptime(texto, "%d-%m-%Y").date() if texto else date.today()
+    precios.anadir(conn, instrumento_id, fecha, input("Precio (punto o coma): ").strip())
+    print("Guardado")
+
+
 def listar_compras(conn):
     texto = input("Id de instrumento (vacío = todos): ").strip()
     mostrar_compras(compras.listar(conn, int(texto) if texto else None))
@@ -112,6 +130,7 @@ def main():
         "6": lambda: listar_compras(conn),
         "7": lambda: borrar_con_id(conn, compras),
         "8": lambda: mostrar_cartera(cartera.resumen(conn)),
+        "9": lambda: poner_precio(conn),
     }
     while True:
         print(MENU)

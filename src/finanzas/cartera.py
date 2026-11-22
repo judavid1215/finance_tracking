@@ -3,11 +3,14 @@
 import sqlite3
 from decimal import Decimal
 
-from finanzas import compras
+from finanzas import compras, precios
 
 
 def resumen(conn: sqlite3.Connection) -> list[dict]:
     """Una fila por instrumento con compras: participaciones, invertido y precio medio.
+
+    Si hay un precio puesto a mano, añade precio_actual, valor_actual, ganancia (valor menos
+    invertido) y rentabilidad (ganancia / invertido, en tanto por uno); si no, son None.
 
     Se suma en Python con Decimal (SQLite sumaría los textos como float y perdería precisión).
     Ordenado por nombre del instrumento.
@@ -25,6 +28,14 @@ def resumen(conn: sqlite3.Connection) -> list[dict]:
         )
         fila["participaciones"] += c["participaciones"]
         fila["invertido"] += c["participaciones"] * c["precio"]
+        
     for fila in por_instrumento.values():
         fila["precio_medio"] = fila["invertido"] / fila["participaciones"]
+        actual = precios.ultimo(conn, fila["instrumento_id"])
+        fila["precio_actual"] = actual
+        fila["valor_actual"] = fila["ganancia"] = fila["rentabilidad"] = None
+        if actual is not None:
+            fila["valor_actual"] = fila["participaciones"] * actual
+            fila["ganancia"] = fila["valor_actual"] - fila["invertido"]
+            fila["rentabilidad"] = fila["ganancia"] / fila["invertido"]
     return sorted(por_instrumento.values(), key=lambda f: f["instrumento"].lower())

@@ -14,7 +14,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
-from finanzas import compras, db, instrumentos  # noqa: E402
+from finanzas import compras, db, instrumentos, precios  # noqa: E402
 
 RUTA_DB = RAIZ / "data" / "finanzas.sqlite3"
 
@@ -54,7 +54,8 @@ def rellenar(conn, rng: random.Random) -> None:
             invertido = Decimal(rng.randrange(100, 501, 25))  # 100–500 € en pasos de 25
             participaciones = (invertido / precio).quantize(quantum, rounding=ROUND_DOWN)
             compras.anadir(conn, id_, fecha_mes(atras), participaciones, precio)
-        print(f"{nombre}: {MESES} compras añadidas")
+        precios.anadir(conn, id_, date.today(), precio)  # precio actual = el último simulado
+        print(f"{nombre}: {MESES} compras y precio actual añadidos")
 
 
 def main() -> None:
