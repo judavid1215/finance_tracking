@@ -26,6 +26,8 @@ def test_anadir_y_listar(conn, inst):
             "id": id_,
             "instrumento_id": inst,
             "instrumento": "Bitcoin",
+            "grupo_id": 1,
+            "grupo": "Personal",
             "fecha": date(2026, 3, 15),
             "participaciones": Decimal("0.00012345"),
             "precio": Decimal("61234.56"),
@@ -59,12 +61,15 @@ def test_base_antigua_sin_comision_se_migra(tmp_path):
         """
         DROP VIEW compras_detalle; DROP VIEW ventas_detalle;
         DROP TABLE compras; DROP TABLE ventas;
+        INSERT INTO grupos VALUES (1, 'Personal');
         CREATE TABLE compras (id INTEGER PRIMARY KEY, instrumento_id INTEGER NOT NULL,
-            fecha TEXT NOT NULL, participaciones TEXT NOT NULL, precio TEXT NOT NULL);
+            grupo_id INTEGER NOT NULL, fecha TEXT NOT NULL, participaciones TEXT NOT NULL,
+            precio TEXT NOT NULL);
         CREATE TABLE ventas (id INTEGER PRIMARY KEY, instrumento_id INTEGER NOT NULL,
-            fecha TEXT NOT NULL, participaciones TEXT NOT NULL, precio TEXT NOT NULL);
+            grupo_id INTEGER NOT NULL, fecha TEXT NOT NULL, participaciones TEXT NOT NULL,
+            precio TEXT NOT NULL);
         INSERT INTO instrumentos (nombre, tipo, divisa) VALUES ('Bitcoin', 'Cripto', 'EUR');
-        INSERT INTO compras VALUES (1, 1, '2026-01-01', '2', '100');
+        INSERT INTO compras VALUES (1, 1, 1, '2026-01-01', '2', '100');
         """
     )
     antigua.close()

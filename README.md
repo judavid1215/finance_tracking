@@ -24,9 +24,18 @@ Qué hay (en `src/finanzas/`):
 
 Para probar a mano: `python main.py` (menú de consola).
 
+## Grupos
+
+Cada compra y venta pertenece a un grupo (`grupos.py`: Personal, Pension...), para poder tener el
+mismo fondo con objetivos distintos. Un instrumento sigue siendo uno solo (un histórico de
+precios) y su posición se calcula por grupo: no se puede vender de un grupo lo que solo tiene
+otro. Sin indicar grupo se usa "Personal". La cartera da una fila por instrumento y grupo, el
+reparto puede agruparse por grupo y los grupos se gestionan con la opción 19 del menú.
+Las bases anteriores a los grupos no se migran: hay que borrarlas y volver a importar.
+
 ## Importar desde CSV (MyInvestor)
 
-`finanzas.importacion.importar_csv(nombre, isin, divisa, ruta, ruta_db=...)`
+`finanzas.importacion.importar_csv(nombre, isin, divisa, ruta, grupo="Personal", ruta_db=..., ticker_yahoo=None)`
 importa un CSV "Plusvalías y minusvalías" de MyInvestor como un fondo (uno por llamada). Lanza `ValueError` si algo falla. Cada fila es un lote que sigue en cartera (solo posiciones abiertas, sin ventas). El CSV no trae
 participaciones ni precios, así que se calculan:
 

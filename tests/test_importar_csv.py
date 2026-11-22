@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from finanzas import compras, db, importacion, instrumentos
+from finanzas import compras, db, grupos, importacion, instrumentos
 
 ISIN = "IE00BYX5NX33"
 NOMBRE = "Mi fondo"
@@ -268,3 +268,58 @@ def test_usa_el_ticker_ya_guardado_si_no_se_da_otro(conn, tmp_path):
 
     importar(conn, csv_de(tmp_path, LOTES), leer_historico=espia)
     assert pedidos == ["GUARDADO.F"]
+
+
+def test_grupo_por_defecto_y_grupo_indicado_se_crea_si_no_existe(conn, tmp_path):
+    importar(conn, csv_de(tmp_path, LOTES))
+    assert {c["grupo"] for c in compras.listar(conn)} == {"Personal"}
+    # el mismo fondo en otro grupo no es un duplicado
+    plan = importar(conn, csv_de(tmp_path, LOTES), grupo="Pension")
+    assert plan["grupo"] == "Pension" and plan["grupo_creado"] is True
+    por_grupo = {}
+    for c in compras.listar(conn):
+        por_grupo[c["grupo"]] = por_grupo.get(c["grupo"], 0) + 1
+    assert por_grupo == {"Personal": 3, "Pension": 3}
+    assert len(instrumentos.listar(conn)) == 1  # un solo instrumento para los dos grupos
+
+
+def test_reimportar_en_el_mismo_grupo_se_rechaza_pero_no_en_otro(conn, tmp_path):
+    ruta = csv_de(tmp_path, LOTES)
+    importar(conn, ruta, grupo="Pension")
+    with pytest.raises(importacion.FondoYaImportado, match="grupo Pension"):
+        importar(conn, ruta, grupo="pension")  # sin distinguir mayúsculas
+    importar(conn, ruta, grupo="Personal")
+    assert len(compras.listar(conn)) == 6
+
+
+def test_grupo_vacio(conn, tmp_path):
+    with pytest.raises(ValueError, match="falta el grupo"):
+        importar(conn, csv_de(tmp_path, LOTES), grupo="  ")
+
+
+def test_si_falla_al_escribir_no_deja_ni_el_grupo_nuevo(conn, tmp_path, monkeypatch):
+    importar(conn, csv_de(tmp_path, LOTES), grupo="Personal")
+    reales = compras.anadir
+    llamadas = []
+
+    def falla_a_la_segunda(*args, **kwargs):
+        llamadas.append(1)
+        if len(llamadas) == 2:
+            raise RuntimeError("disco lleno")
+        return reales(*args, **kwargs)
+
+    monkeypatch.setattr(compras, "anadir", falla_a_la_segunda)
+    with pytest.raises(RuntimeError):
+        importar(conn, csv_de(tmp_path, LOTES), grupo="Pension")
+    assert grupos.obtener_por_nombre(conn, "Pension") is None
+    assert len(compras.listar(conn)) == 3  # lo del otro grupo sigue intacto
+
+
+def test_importar_csv_con_grupo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(importacion.yahoo, "leer_historico", historico_falso)
+    ruta_db = tmp_path / "otra.sqlite3"
+    importacion.importar_csv(
+        NOMBRE, ISIN, "EUR", csv_de(tmp_path, LOTES), grupo="Pension", ruta_db=ruta_db
+    )
+    salida = capsys.readouterr().out
+    assert "[Pension]" in salida and "Se ha creado el grupo 'Pension'" in salida

@@ -14,6 +14,13 @@ CREATE TABLE IF NOT EXISTS instrumentos (
     -- Más adelante: grupo_id INTEGER (nullable) para agrupar instrumentos.
 );
 
+-- Grupos para separar el objetivo de las operaciones (ej. Personal, Pension): un mismo
+-- instrumento puede estar en varios grupos, con sus propias compras y ventas.
+CREATE TABLE IF NOT EXISTS grupos (
+    id      INTEGER PRIMARY KEY,
+    nombre  TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK (length(nombre) > 0)
+);
+
 -- Un identificador (ISIN, DGS o TICKER) identifica a un único instrumento: PK (tipo, valor).
 CREATE TABLE IF NOT EXISTS identificadores (
     instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id) ON DELETE CASCADE,
@@ -28,6 +35,7 @@ CREATE INDEX IF NOT EXISTS ix_identificadores_instrumento ON identificadores(ins
 CREATE TABLE IF NOT EXISTS compras (
     id              INTEGER PRIMARY KEY,
     instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id),
+    grupo_id        INTEGER NOT NULL REFERENCES grupos(id),
     fecha           TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
     participaciones TEXT NOT NULL CHECK (CAST(participaciones AS REAL) > 0),
     precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
@@ -39,6 +47,7 @@ CREATE INDEX IF NOT EXISTS ix_compras_instrumento ON compras(instrumento_id);
 CREATE TABLE IF NOT EXISTS ventas (
     id              INTEGER PRIMARY KEY,
     instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id),
+    grupo_id        INTEGER NOT NULL REFERENCES grupos(id),
     fecha           TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
     participaciones TEXT NOT NULL CHECK (CAST(participaciones AS REAL) > 0),
     precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
@@ -72,12 +81,14 @@ CREATE VIEW compras_detalle AS
 SELECT c.id,
        i.nombre AS instrumento,
        d.valor AS isin,
+       g.nombre AS grupo,
        strftime('%d-%m-%Y', c.fecha) AS fecha,
        c.participaciones,
        c.precio,
        c.comision
 FROM compras c
 JOIN instrumentos i ON i.id = c.instrumento_id
+JOIN grupos g ON g.id = c.grupo_id
 LEFT JOIN identificadores d ON d.instrumento_id = i.id AND d.tipo = 'ISIN'
 ORDER BY c.fecha, c.id;
 
@@ -86,12 +97,14 @@ CREATE VIEW ventas_detalle AS
 SELECT v.id,
        i.nombre AS instrumento,
        d.valor AS isin,
+       g.nombre AS grupo,
        strftime('%d-%m-%Y', v.fecha) AS fecha,
        v.participaciones,
        v.precio,
        v.comision
 FROM ventas v
 JOIN instrumentos i ON i.id = v.instrumento_id
+JOIN grupos g ON g.id = v.grupo_id
 LEFT JOIN identificadores d ON d.instrumento_id = i.id AND d.tipo = 'ISIN'
 ORDER BY v.fecha, v.id;
 
@@ -111,10 +124,23 @@ def conectar(ruta: str | Path) -> sqlite3.Connection:
     # SQLite no aplica las claves foráneas salvo que se pida en cada conexión.
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_TABLAS)
+    _comprobar_grupos(conn, ruta)
     _anadir_comision_si_falta(conn)
     _anadir_ticker_yahoo_si_falta(conn)
     conn.executescript(_VISTAS)
     return conn
+
+
+def _comprobar_grupos(conn: sqlite3.Connection, ruta) -> None:
+    """Las bases anteriores a los grupos no se migran: hay que empezar una nueva."""
+    for tabla in ("compras", "ventas"):
+        columnas = [c["name"] for c in conn.execute(f"PRAGMA table_info({tabla})")]
+        if "grupo_id" not in columnas:
+            conn.close()
+            raise ValueError(
+                f"La base {ruta} es anterior a los grupos (a {tabla} le falta grupo_id): "
+                "bórrala y vuelve a importar los datos"
+            )
 
 
 def _anadir_ticker_yahoo_si_falta(conn: sqlite3.Connection) -> None:

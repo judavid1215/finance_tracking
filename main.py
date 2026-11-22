@@ -12,11 +12,12 @@ from finanzas import (  # noqa: E402
     cartera,
     compras,
     db,
+    grupos,
     instrumentos,
     precios,
     quefondos,
-    ventas,
     importacion,
+    ventas,
 )
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
@@ -43,6 +44,7 @@ MENU = """
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
 14) Consultar precios de ahora (fondos, ETF, acciones, planes); no se guardan en el histórico
+19) Grupos (Personal, Pension...): listar, crear o borrar
 18) Poner/quitar ticker de Yahoo (ej. 0P00009PQ4.F a un fondo; se usa en lugar del ISIN)
 17) Descargar histórico diario de precios y tipos de cambio desde la primera compra (Yahoo)
 --- ---
@@ -65,7 +67,7 @@ def mostrar_compras(lista):
         print("(vacío)")
     for c in lista:
         print(
-            f"{c['id']:>3} | {c['instrumento']:<20} | {c['fecha']:%d-%m-%Y} | "
+            f"{c['id']:>3} | {c['instrumento']:<20} | {c['grupo']:<10} | {c['fecha']:%d-%m-%Y} | "
             f"{c['participaciones']} part. x {c['precio']} | comisión {c['comision']}"
         )
 
@@ -75,7 +77,7 @@ def mostrar_cartera(filas):
         print("(vacío)")
     for f in filas:
         linea = (
-            f"{f['instrumento']:<20} | {f['participaciones']} part. | "
+            f"{f['instrumento']:<20} | {f['grupo']:<10} | {f['participaciones']} part. | "
             f"invertido {f['invertido']:.2f} {f['divisa']} | precio medio {f['precio_medio']:.4f}"
         )
         if f["valor_actual"] is not None:
@@ -114,8 +116,10 @@ def mostrar_reparto(r):
 
 
 def reparto_cartera(conn, vivos):
-    print("Agrupar por: 1) instrumento  2) tipo  3) divisa")
-    por = {"1": "instrumento", "2": "tipo", "3": "divisa"}.get(input("Opción: ").strip())
+    print("Agrupar por: 1) instrumento  2) tipo  3) divisa  4) grupo")
+    por = {"1": "instrumento", "2": "tipo", "3": "divisa", "4": "grupo"}.get(
+        input("Opción: ").strip()
+    )
     if por is None:
         print("Opción no válida")
         return
@@ -143,6 +147,30 @@ def anadir_instrumento(conn):
     print("Añadido con id", instrumentos.anadir(conn, nombre, tipo, divisa, identificador))
 
 
+def pedir_grupo(conn):
+    """Pregunta el grupo por nombre; vacío = el de por defecto. Devuelve su id (o None)."""
+    print("Grupos:", ", ".join(g["nombre"] for g in grupos.listar(conn)) or "(ninguno todavía)")
+    nombre = input(f"Grupo (vacío = {grupos.GRUPO_POR_DEFECTO}): ").strip()
+    if not nombre:
+        return None
+    grupo = grupos.obtener_por_nombre(conn, nombre)
+    if grupo is None:
+        raise ValueError(f"No existe el grupo '{nombre}'; créalo con la opción 19")
+    return grupo["id"]
+
+
+def gestionar_grupos(conn):
+    for g in grupos.listar(conn):
+        print(f"{g['id']:>3} | {g['nombre']}")
+    accion = input("1) crear  2) borrar  (vacío = volver): ").strip()
+    if accion == "1":
+        print("Añadido con id", grupos.anadir(conn, input("Nombre: ")))
+    elif accion == "2":
+        id_ = pedir_entero("Id a borrar: ")
+        if id_ is not None:
+            print("Borrado" if grupos.borrar(conn, id_) else "No existe ese id")
+
+
 def anadir_compra(conn):
     mostrar_instrumentos(instrumentos.listar(conn))
     instrumento_id = pedir_entero("Id del instrumento: ")
@@ -153,7 +181,8 @@ def anadir_compra(conn):
     participaciones = input("Número de participaciones (punto o coma): ").strip()
     precio = input("Precio por participación (punto o coma): ").strip()
     comision = input("Comisión en la divisa del instrumento (vacío = 0): ").strip() or "0"
-    id_ = compras.anadir(conn, instrumento_id, fecha, participaciones, precio, comision)
+    grupo_id = pedir_grupo(conn)
+    id_ = compras.anadir(conn, instrumento_id, fecha, participaciones, precio, comision, grupo_id)
     print("Añadida con id", id_)
 
 
@@ -167,7 +196,8 @@ def anadir_venta(conn):
     participaciones = input("Número de participaciones (punto o coma): ").strip()
     precio = input("Precio por participación (punto o coma): ").strip()
     comision = input("Comisión en la divisa del instrumento (vacío = 0): ").strip() or "0"
-    id_ = ventas.anadir(conn, instrumento_id, fecha, participaciones, precio, comision)
+    grupo_id = pedir_grupo(conn)
+    id_ = ventas.anadir(conn, instrumento_id, fecha, participaciones, precio, comision, grupo_id)
     print("Añadida con id", id_)
 
 
@@ -307,6 +337,7 @@ def main():
         "16": lambda: reparto_cartera(conn, vivos),
         "17": lambda: descargar_historicos(conn),
         "18": lambda: poner_ticker_yahoo(conn),
+        "19": lambda: gestionar_grupos(conn),
     }
     while True:
         print(MENU)
@@ -326,4 +357,52 @@ def main():
 
 
 if __name__ == "__main__":    
+
+    path_msci = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo IE00BYX5NX33.csv"
+    importacion.importar_csv(
+        nombre="Fidelity MSCI World Index Fund P-ACC-EUR",
+        isin="IE00BYX5NX33",
+        divisa="EUR",
+        ruta=path_msci,grupo="Cartera principal"
+    )
+
+    path_axa = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo FR0000447823.csv"
+    importacion.importar_csv(
+        nombre="AXA Trésor Court Terme C", isin="FR0000447823", divisa="EUR", ruta=path_axa,grupo="Cartera principal"
+    )
+
+    path_ishares = (
+        r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo IE000ZYRH0Q7.csv"
+    )
+    importacion.importar_csv(
+        nombre="iShares Developed World Index Fund (IE) Class S",
+        isin="IE000ZYRH0Q7",
+        divisa="EUR",
+        ruta=path_ishares,grupo="Cartera principal"
+    )
+
+    path_dnb = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo LU0302296495.csv"
+    importacion.importar_csv(
+        nombre="DNB Fund - Technology A EUR (Acc)",
+        ticker_yahoo="0P00009PQ4.F",
+        isin="LU0302296495",
+        divisa="EUR",
+        ruta=path_dnb,grupo="Cartera principal"
+    )
+
+    path_amundi = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo LU0996175948.csv"
+    importacion.importar_csv(
+        nombre="Amundi Core MSCI Emerging Markets",
+        isin="LU0996175948",
+        divisa="EUR",
+        ruta=path_amundi,grupo="Cartera principal"
+    )
+
+    path_Laura = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo IE00BYX5NX33 Laura.csv"
+    importacion.importar_csv(
+        nombre="iShares Developed World Index Fund (IE) Class S",
+        isin="IE000ZYRH0Q7",
+        divisa="EUR",
+        ruta=path_Laura,grupo="Inversiones Laura"
+    )
     main()

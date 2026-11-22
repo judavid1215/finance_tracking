@@ -18,10 +18,12 @@ def _tasa(conn, divisa, vivos):
     return divisas.ultima(conn, divisa)
 
 
-def resumen(conn: sqlite3.Connection, vivos: dict | None = None) -> list[dict]:
-    """Una fila por instrumento con participaciones en cartera: participaciones, invertido
-    y precio medio (coste medio ponderado, ver posicion.py). Un instrumento vendido por
-    completo no aparece.
+def resumen(
+    conn: sqlite3.Connection, vivos: dict | None = None, grupo_id: int | None = None
+) -> list[dict]:
+    """Una fila por instrumento y grupo con participaciones en cartera: participaciones,
+    invertido y precio medio (coste medio ponderado, ver posicion.py). Lo vendido por
+    completo no aparece. Con grupo_id solo salen las filas de ese grupo.
 
     Cada fila lleva su divisa (los importes van en la divisa del instrumento; total() da euros).
 
@@ -35,16 +37,21 @@ def resumen(conn: sqlite3.Connection, vivos: dict | None = None) -> list[dict]:
     Se calcula en Python con Decimal (SQLite sumaría los textos como float y perdería precisión).
     Ordenado por nombre del instrumento.
     """
-    nombres = {c["instrumento_id"]: c["instrumento"] for c in compras.listar(conn)}
+    pares = {
+        (c["instrumento_id"], c["grupo_id"]): (c["instrumento"], c["grupo"])
+        for c in compras.listar(conn, grupo_id=grupo_id)
+    }
     filas = []
-    for instrumento_id, nombre in nombres.items():
-        pos = posicion.calcular(conn, instrumento_id)
+    for (instrumento_id, id_grupo), (nombre, grupo) in pares.items():
+        pos = posicion.calcular(conn, instrumento_id, id_grupo)
         if pos["participaciones"] == 0:
             continue
         inst = instrumentos.obtener(conn, instrumento_id)
         fila = {
             "instrumento_id": instrumento_id,
             "instrumento": nombre,
+            "grupo_id": id_grupo,
+            "grupo": grupo,
             "tipo": inst["tipo"],
             "divisa": inst["divisa"],
             "participaciones": pos["participaciones"],
@@ -59,17 +66,17 @@ def resumen(conn: sqlite3.Connection, vivos: dict | None = None) -> list[dict]:
             fila["ganancia"] = fila["valor_actual"] - fila["invertido"]
             fila["rentabilidad"] = fila["ganancia"] / fila["invertido"]
         filas.append(fila)
-    return sorted(filas, key=lambda f: f["instrumento"].lower())
+    return sorted(filas, key=lambda f: (f["instrumento"].lower(), f["grupo"].lower()))
 
 
 def _valoradas(
-    conn: sqlite3.Connection, vivos: dict | None = None
+    conn: sqlite3.Connection, vivos: dict | None = None, grupo_id: int | None = None
 ) -> tuple[list[tuple[dict, Decimal]], list[tuple[str, str]]]:
     """Filas de resumen() con precio y, si no están en euros, con tipo de cambio, junto con su
     tasa a euros; el resto va en la segunda lista como (nombre, motivo)."""
     valoradas = []
     excluidos = []
-    for f in resumen(conn, vivos):
+    for f in resumen(conn, vivos, grupo_id):
         if f["valor_actual"] is None:
             excluidos.append((f["instrumento"], "sin precio"))
             continue
@@ -81,7 +88,7 @@ def _valoradas(
     return valoradas, excluidos
 
 
-def total(conn: sqlite3.Connection, vivos: dict | None = None) -> dict:
+def total(conn: sqlite3.Connection, vivos: dict | None = None, grupo_id: int | None = None) -> dict:
     """Total de la cartera en euros: invertido, valor, ganancia y rentabilidad.
 
     Cada instrumento se convierte con el tipo de cambio vivo o, si no hay, el último guardado
@@ -91,7 +98,7 @@ def total(conn: sqlite3.Connection, vivos: dict | None = None) -> dict:
     (nombre, motivo), para que el total no mezcle instrumentos valorados y sin valorar. Sin nada
     valorado, los totales son None.
     """
-    valoradas, excluidos = _valoradas(conn, vivos)
+    valoradas, excluidos = _valoradas(conn, vivos, grupo_id)
     invertido = sum((f["invertido"] * tasa for f, tasa in valoradas), Decimal(0))
     valor = sum((f["valor_actual"] * tasa for f, tasa in valoradas), Decimal(0))
     resultado = {"invertido": None, "valor": None, "ganancia": None, "rentabilidad": None}
@@ -102,12 +109,13 @@ def total(conn: sqlite3.Connection, vivos: dict | None = None) -> dict:
     return resultado
 
 
-AGRUPACIONES = ("instrumento", "tipo", "divisa")
+AGRUPACIONES = ("instrumento", "tipo", "divisa", "grupo")
 
 
 def reparto(conn: sqlite3.Connection, por: str = "instrumento", vivos: dict | None = None) -> dict:
     """Reparto de la cartera en porcentaje del valor en euros, agrupado por "instrumento",
-    "tipo" (fondo, ETF, acción...) o "divisa" (la del instrumento, no la de su activo subyacente).
+    "tipo" (fondo, ETF, acción...), "divisa" (la del instrumento, no la de su activo subyacente)
+    o "grupo" (Personal, Pension...).
 
     Devuelve {"valor": total en EUR (None si nada valorado), "filas": [...], "excluidos": [...]}.
     Cada fila lleva grupo, valor (EUR) y porcentaje (tanto por cien), de mayor a menor peso.

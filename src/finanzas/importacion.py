@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-from finanzas import compras, db, instrumentos, yahoo
+from finanzas import compras, db, grupos, instrumentos, yahoo
 
 RUTA_DB = Path(__file__).resolve().parents[2] / "data" / "finanzas.sqlite3"
 
@@ -138,15 +138,25 @@ def elegir_nav(
 
 
 def preparar(
-    ruta: Path, isin: str, nombre: str, divisa: str, conn, leer_historico=None, ticker_yahoo=None
+    ruta: Path,
+    isin: str,
+    nombre: str,
+    divisa: str,
+    conn,
+    leer_historico=None,
+    ticker_yahoo=None,
+    grupo: str = grupos.GRUPO_POR_DEFECTO,
 ) -> dict:
     """Valida un CSV y calcula sus compras, sin escribir nada. Lanza ValueError si algo falla."""
     leer_historico = leer_historico or yahoo.leer_historico
     isin = normalizar_isin(isin)
     nombre = nombre.strip()
     divisa = divisa.strip().upper()
+    grupo = grupo.strip()
     if not nombre:
         raise ValueError("falta el nombre del fondo")
+    if not grupo:
+        raise ValueError("falta el grupo")
     if not re.fullmatch(r"[A-Z]{3}", divisa):
         raise ValueError(f"divisa no válida: {divisa!r} (se espera un código como EUR)")
     try:
@@ -157,9 +167,17 @@ def preparar(
     if max(lote["fecha"] for lote in lotes) > fecha_export:
         raise ValueError("hay lotes con fecha posterior a la del fichero")
     existente = next((i for i in instrumentos.listar(conn) if i["identificador"] == isin), None)
-    if existente and compras.listar(conn, existente["id"]):
+    grupo_existente = grupos.obtener_por_nombre(conn, grupo)
+    if grupo_existente:
+        grupo = grupo_existente["nombre"]
+    if (
+        existente
+        and grupo_existente
+        and compras.listar(conn, existente["id"], grupo_existente["id"])
+    ):
         raise FondoYaImportado(
-            f"{existente['nombre']} ya tiene compras; bórralas antes de reimportar"
+            f"{existente['nombre']} ya tiene compras en el grupo {grupo}; "
+            "bórralas antes de reimportar"
         )
     ticker_yahoo = (ticker_yahoo or "").strip().upper() or None
     simbolo = ticker_yahoo or (existente["ticker_yahoo"] if existente else None) or isin
@@ -188,6 +206,7 @@ def preparar(
         "nombre": nombre,
         "divisa": divisa,
         "ticker_yahoo": ticker_yahoo,
+        "grupo": grupo,
         "id": existente["id"] if existente else None,
         "compras": sorted(operaciones),
         "nav": (fecha_nav, nav, error),
@@ -201,7 +220,11 @@ def aplicar(conn, plan: dict) -> None:
     """Escribe el plan; si algo falla deshace todo lo escrito y relanza el error."""
     id_ = plan["id"]
     creado = id_ is None
+    grupo_id = None
+    grupo_creado = False
     try:
+        grupo_id, grupo_creado = grupos.obtener_o_crear(conn, plan["grupo"])
+        plan["grupo_creado"] = grupo_creado
         if creado:
             id_ = instrumentos.anadir(
                 conn, plan["nombre"], "Fondo", plan["divisa"], plan["isin"], plan["ticker_yahoo"]
@@ -209,13 +232,17 @@ def aplicar(conn, plan: dict) -> None:
         elif plan["ticker_yahoo"]:
             instrumentos.asignar_ticker_yahoo(conn, id_, plan["ticker_yahoo"])
         for fecha, participaciones, precio in plan["compras"]:
-            compras.anadir(conn, id_, fecha, participaciones, precio)
+            compras.anadir(conn, id_, fecha, participaciones, precio, grupo_id=grupo_id)
     except Exception:
-        if id_ is not None:
-            conn.execute("DELETE FROM compras WHERE instrumento_id = ?", (id_,))
+        if id_ is not None and grupo_id is not None:
+            conn.execute(
+                "DELETE FROM compras WHERE instrumento_id = ? AND grupo_id = ?", (id_, grupo_id)
+            )
             conn.commit()
-            if creado:
-                instrumentos.borrar(conn, id_)
+        if creado and id_ is not None:
+            instrumentos.borrar(conn, id_)
+        if grupo_creado:
+            grupos.borrar(conn, grupo_id)
         raise
 
 
@@ -227,12 +254,13 @@ def importar(
     divisa: str,
     leer_historico=None,
     ticker_yahoo: str | None = None,
+    grupo: str = grupos.GRUPO_POR_DEFECTO,
 ) -> dict:
-    """Valida el CSV y, si no hay ningún error, lo escribe.
+    """Valida el CSV y, si no hay ningún error, lo escribe en el grupo indicado.
 
     Devuelve el plan (compras calculadas, NAV elegido...). Lanza ValueError si algo falla.
     """
-    plan = preparar(Path(ruta), isin, nombre, divisa, conn, leer_historico, ticker_yahoo)
+    plan = preparar(Path(ruta), isin, nombre, divisa, conn, leer_historico, ticker_yahoo, grupo)
     aplicar(conn, plan)
     return plan
 
@@ -246,7 +274,7 @@ def resumen(plan: dict) -> str:
         else "SIN VALIDAR: Yahoo no tiene histórico"
     )
     texto = (
-        f"{plan['nombre']}: {len(plan['compras'])} compras, "
+        f"{plan['nombre']} [{plan['grupo']}]: {len(plan['compras'])} compras, "
         f"{sum(c[1] for c in plan['compras'])} participaciones, invertido {plan['invertido']} "
         f"{plan['divisa']}, valor {plan['valor']} {plan['divisa']} "
         f"(NAV {nav} del {fecha:%d/%m/%Y}, {validacion})"
@@ -261,15 +289,18 @@ def importar_csv(
     isin: str,
     divisa: str,
     ruta: str | Path,
+    grupo: str = grupos.GRUPO_POR_DEFECTO,
     ruta_db: str | Path = RUTA_DB,
     ticker_yahoo: str | None = None,
 ) -> dict | None:
     """Importa un CSV de MyInvestor como un fondo nuevo, imprime un resumen y devuelve el plan.
 
-    Si el fondo ya tiene compras, avisa, no hace nada y devuelve None (así se puede repetir una
-    serie de llamadas sin que se pare). Con cualquier otro problema lanza ValueError sin escribir
-    nada: ISIN, nombre o divisa no válidos, CSV mal formado, divisa distinta de la de Yahoo, NAV
-    que no encaja...
+    `grupo` es el grupo (Personal, Pension...) al que van las compras; si no existe, se crea. Un
+    mismo fondo se puede importar en varios grupos.
+    Si el fondo ya tiene compras en ese grupo, avisa, no hace nada y devuelve None (así se puede
+    repetir una serie de llamadas sin que se pare). Con cualquier otro problema lanza ValueError
+    sin escribir nada: ISIN, nombre o divisa no válidos, CSV mal formado, divisa distinta de la
+    de Yahoo, NAV que no encaja...
     `ruta_db` es la base de datos a usar. `ticker_yahoo`
     (opcional, ej. "0P00009PQ4.F") es el símbolo con el que se busca el histórico en Yahoo cuando
     el ISIN no da datos. Se guarda en el instrumento y se usa también para los precios y el
@@ -277,13 +308,17 @@ def importar_csv(
     """
     conn = db.conectar(ruta_db)
     try:
-        plan = importar(conn, Path(ruta), isin, nombre, divisa, ticker_yahoo=ticker_yahoo)
+        plan = importar(
+            conn, Path(ruta), isin, nombre, divisa, ticker_yahoo=ticker_yahoo, grupo=grupo
+        )
     except FondoYaImportado as e:
         print(f"AVISO: {e}. No se importa de nuevo.")
         return None
     finally:
         conn.close()
     print(resumen(plan))
+    if plan["grupo_creado"]:
+        print(f"Se ha creado el grupo '{plan['grupo']}'.")
     print("Hecho.")
     return plan
 
@@ -294,12 +329,12 @@ if __name__ == "__main__":
         nombre="Fidelity MSCI World Index Fund P-ACC-EUR",
         isin="IE00BYX5NX33",
         divisa="EUR",
-        ruta=path_msci,
+        ruta=path_msci,grupo="Cartera principal"
     )
 
     path_axa = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo FR0000447823.csv"
     importar_csv(
-        nombre="AXA Trésor Court Terme C", isin="FR0000447823", divisa="EUR", ruta=path_axa
+        nombre="AXA Trésor Court Terme C", isin="FR0000447823", divisa="EUR", ruta=path_axa,grupo="Cartera principal"
     )
 
     path_ishares = (
@@ -309,7 +344,7 @@ if __name__ == "__main__":
         nombre="iShares Developed World Index Fund (IE) Class S",
         isin="IE000ZYRH0Q7",
         divisa="EUR",
-        ruta=path_ishares,
+        ruta=path_ishares,grupo="Cartera principal"
     )
 
     path_dnb = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo LU0302296495.csv"
@@ -318,7 +353,7 @@ if __name__ == "__main__":
         ticker_yahoo="0P00009PQ4.F",
         isin="LU0302296495",
         divisa="EUR",
-        ruta=path_dnb,
+        ruta=path_dnb,grupo="Cartera principal"
     )
 
     path_amundi = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo LU0996175948.csv"
@@ -326,5 +361,13 @@ if __name__ == "__main__":
         nombre="Amundi Core MSCI Emerging Markets",
         isin="LU0996175948",
         divisa="EUR",
-        ruta=path_amundi,
+        ruta=path_amundi,grupo="Cartera principal"
+    )
+
+    path_Laura = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo IE00BYX5NX33 Laura.csv"
+    importar_csv(
+        nombre="iShares Developed World Index Fund (IE) Class S",
+        isin="IE000ZYRH0Q7",
+        divisa="EUR",
+        ruta=path_Laura,grupo="Inversiones Laura"
     )

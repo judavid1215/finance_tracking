@@ -13,22 +13,25 @@ from decimal import Decimal
 
 _MOVIMIENTOS = """
 SELECT 'compra' AS tipo, 0 AS orden, id, fecha, participaciones, precio, comision
-FROM compras WHERE instrumento_id = :id
+FROM compras WHERE instrumento_id = :id AND (:grupo IS NULL OR grupo_id = :grupo)
 UNION ALL
 SELECT 'venta', 1, id, fecha, participaciones, precio, comision
-FROM ventas WHERE instrumento_id = :id
+FROM ventas WHERE instrumento_id = :id AND (:grupo IS NULL OR grupo_id = :grupo)
 ORDER BY fecha, orden, id
 """
 
 
-def calcular(conn: sqlite3.Connection, instrumento_id: int) -> dict:
+def calcular(conn: sqlite3.Connection, instrumento_id: int, grupo_id: int | None = None) -> dict:
     """Devuelve {"participaciones": ..., "invertido": ...} tras todas las operaciones.
+
+    Con grupo_id solo cuentan las operaciones de ese grupo; sin él, las de todos los grupos
+    juntas (la venta de un grupo se comprueba siempre contra las compras de su propio grupo).
 
     Lanza ValueError si en algún momento se vende más de lo que había.
     """
     participaciones = Decimal(0)
     invertido = Decimal(0)
-    for m in conn.execute(_MOVIMIENTOS, {"id": instrumento_id}):
+    for m in conn.execute(_MOVIMIENTOS, {"id": instrumento_id, "grupo": grupo_id}):
         n = Decimal(m["participaciones"])
         if m["tipo"] == "compra":
             participaciones += n

@@ -27,6 +27,8 @@ def test_anadir_y_listar(conn, inst):
             "id": id_,
             "instrumento_id": inst,
             "instrumento": "Bitcoin",
+            "grupo_id": 1,
+            "grupo": "Personal",
             "fecha": date(2026, 3, 15),
             "participaciones": Decimal("1.5"),
             "precio": Decimal("150"),

@@ -4,7 +4,7 @@ import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from finanzas import posicion
+from finanzas import grupos, posicion
 
 
 def _decimal(valor, campo: str, permitir_cero: bool = False) -> Decimal:
@@ -30,8 +30,10 @@ def _decimal(valor, campo: str, permitir_cero: bool = False) -> Decimal:
 
 
 _SELECT = """
-SELECT c.*, i.nombre AS instrumento
-FROM compras c JOIN instrumentos i ON i.id = c.instrumento_id
+SELECT c.*, i.nombre AS instrumento, g.nombre AS grupo
+FROM compras c
+JOIN instrumentos i ON i.id = c.instrumento_id
+JOIN grupos g ON g.id = c.grupo_id
 """
 
 
@@ -40,6 +42,8 @@ def _a_dict(fila: sqlite3.Row) -> dict:
         "id": fila["id"],
         "instrumento_id": fila["instrumento_id"],
         "instrumento": fila["instrumento"],
+        "grupo_id": fila["grupo_id"],
+        "grupo": fila["grupo"],
         "fecha": date.fromisoformat(fila["fecha"]),
         "participaciones": Decimal(fila["participaciones"]),
         "precio": Decimal(fila["precio"]),
@@ -48,9 +52,17 @@ def _a_dict(fila: sqlite3.Row) -> dict:
 
 
 def anadir(
-    conn: sqlite3.Connection, instrumento_id: int, fecha: date, participaciones, precio, comision=0
+    conn: sqlite3.Connection,
+    instrumento_id: int,
+    fecha: date,
+    participaciones,
+    precio,
+    comision=0,
+    grupo_id: int | None = None,
 ):
     """Inserta una compra y devuelve su id.
+
+    `grupo_id` es el grupo de la compra (ver grupos.py); sin él, el grupo por defecto "Personal".
 
     La comisión (0 por defecto) va en la divisa del instrumento, igual que el precio.
     Lanza sqlite3.IntegrityError si el instrumento no existe; ValueError/TypeError si los
@@ -58,11 +70,14 @@ def anadir(
     """
     if not isinstance(fecha, date):
         raise TypeError("fecha: usa datetime.date")
+    if grupo_id is None:
+        grupo_id = grupos.por_defecto(conn)
     cur = conn.execute(
-        "INSERT INTO compras (instrumento_id, fecha, participaciones, precio, comision)"
-        " VALUES (?,?,?,?,?)",
+        "INSERT INTO compras (instrumento_id, grupo_id, fecha, participaciones, precio, comision)"
+        " VALUES (?,?,?,?,?,?)",
         (
             instrumento_id,
+            grupo_id,
             fecha.isoformat(),
             str(_decimal(participaciones, "participaciones")),
             str(_decimal(precio, "precio")),
@@ -78,12 +93,14 @@ def borrar(conn: sqlite3.Connection, id: int) -> bool:
 
     Lanza ValueError (y no borra) si alguna venta dejaría de estar cubierta por las compras.
     """
-    fila = conn.execute("SELECT instrumento_id FROM compras WHERE id = ?", (id,)).fetchone()
+    fila = conn.execute(
+        "SELECT instrumento_id, grupo_id FROM compras WHERE id = ?", (id,)
+    ).fetchone()
     if fila is None:
         return False
     conn.execute("DELETE FROM compras WHERE id = ?", (id,))
     try:
-        posicion.calcular(conn, fila["instrumento_id"])
+        posicion.calcular(conn, fila["instrumento_id"], fila["grupo_id"])
     except ValueError as e:
         conn.rollback()
         raise ValueError(f"no se puede borrar la compra: {e}") from None
@@ -91,12 +108,14 @@ def borrar(conn: sqlite3.Connection, id: int) -> bool:
     return True
 
 
-def listar(conn: sqlite3.Connection, instrumento_id: int | None = None) -> list[dict]:
-    """Devuelve las compras con el nombre del instrumento, ordenadas por fecha."""
-    if instrumento_id is None:
-        filas = conn.execute(_SELECT + " ORDER BY c.fecha, c.id").fetchall()
-    else:
-        filas = conn.execute(
-            _SELECT + " WHERE c.instrumento_id = ? ORDER BY c.fecha, c.id", (instrumento_id,)
-        ).fetchall()
+def listar(
+    conn: sqlite3.Connection, instrumento_id: int | None = None, grupo_id: int | None = None
+) -> list[dict]:
+    """Devuelve las compras con el nombre del instrumento y del grupo, ordenadas por fecha.
+    Opcionalmente solo las de un instrumento y/o un grupo."""
+    filas = conn.execute(
+        _SELECT + " WHERE (:i IS NULL OR c.instrumento_id = :i) AND (:g IS NULL OR c.grupo_id = :g)"
+        " ORDER BY c.fecha, c.id",
+        {"i": instrumento_id, "g": grupo_id},
+    ).fetchall()
     return [_a_dict(f) for f in filas]
