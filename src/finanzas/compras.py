@@ -4,11 +4,14 @@ import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from finanzas import posicion
 
-def _decimal(valor, campo: str) -> Decimal:
+
+def _decimal(valor, campo: str, permitir_cero: bool = False) -> Decimal:
     """Convierte a Decimal positivo con como máximo 8 decimales (nunca float).
 
     En texto se acepta coma o punto decimal: '1,5' y '1.5' son lo mismo.
+    Con permitir_cero=True el 0 también vale (para las comisiones); los negativos, nunca.
     """
     if isinstance(valor, bool) or not isinstance(valor, Decimal | int | str):
         raise TypeError(f"{campo}: usa Decimal, int o str, no {type(valor).__name__}")
@@ -18,8 +21,9 @@ def _decimal(valor, campo: str) -> Decimal:
         d = Decimal(valor)
     except InvalidOperation:
         raise ValueError(f"{campo}: número no válido: {valor!r}") from None
-    if not d.is_finite() or d <= 0:
-        raise ValueError(f"{campo}: debe ser un número mayor que 0")
+    if not d.is_finite() or d < 0 or (d == 0 and not permitir_cero):
+        requisito = "no negativo" if permitir_cero else "mayor que 0"
+        raise ValueError(f"{campo}: debe ser un número {requisito}")
     if d.as_tuple().exponent < -8:
         raise ValueError(f"{campo}: máximo 8 decimales")  # así no se pierde precisión
     return d
@@ -39,24 +43,30 @@ def _a_dict(fila: sqlite3.Row) -> dict:
         "fecha": date.fromisoformat(fila["fecha"]),
         "participaciones": Decimal(fila["participaciones"]),
         "precio": Decimal(fila["precio"]),
+        "comision": Decimal(fila["comision"]),
     }
 
 
-def anadir(conn: sqlite3.Connection, instrumento_id: int, fecha: date, participaciones, precio):
+def anadir(
+    conn: sqlite3.Connection, instrumento_id: int, fecha: date, participaciones, precio, comision=0
+):
     """Inserta una compra y devuelve su id.
 
+    La comisión (0 por defecto) va en la divisa del instrumento, igual que el precio.
     Lanza sqlite3.IntegrityError si el instrumento no existe; ValueError/TypeError si los
     números o la fecha no son válidos.
     """
     if not isinstance(fecha, date):
         raise TypeError("fecha: usa datetime.date")
     cur = conn.execute(
-        "INSERT INTO compras (instrumento_id, fecha, participaciones, precio) VALUES (?,?,?,?)",
+        "INSERT INTO compras (instrumento_id, fecha, participaciones, precio, comision)"
+        " VALUES (?,?,?,?,?)",
         (
             instrumento_id,
             fecha.isoformat(),
             str(_decimal(participaciones, "participaciones")),
             str(_decimal(precio, "precio")),
+            str(_decimal(comision, "comision", permitir_cero=True)),
         ),
     )
     conn.commit()
@@ -64,10 +74,21 @@ def anadir(conn: sqlite3.Connection, instrumento_id: int, fecha: date, participa
 
 
 def borrar(conn: sqlite3.Connection, id: int) -> bool:
-    """Borra por id. Devuelve True si existía."""
-    cur = conn.execute("DELETE FROM compras WHERE id = ?", (id,))
+    """Borra por id. Devuelve True si existía.
+
+    Lanza ValueError (y no borra) si alguna venta dejaría de estar cubierta por las compras.
+    """
+    fila = conn.execute("SELECT instrumento_id FROM compras WHERE id = ?", (id,)).fetchone()
+    if fila is None:
+        return False
+    conn.execute("DELETE FROM compras WHERE id = ?", (id,))
+    try:
+        posicion.calcular(conn, fila["instrumento_id"])
+    except ValueError as e:
+        conn.rollback()
+        raise ValueError(f"no se puede borrar la compra: {e}") from None
     conn.commit()
-    return cur.rowcount == 1
+    return True
 
 
 def listar(conn: sqlite3.Connection, instrumento_id: int | None = None) -> list[dict]:

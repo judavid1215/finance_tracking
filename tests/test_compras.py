@@ -20,7 +20,7 @@ def inst(conn):
 
 
 def test_anadir_y_listar(conn, inst):
-    id_ = compras.anadir(conn, inst, date(2026, 3, 15), "0.00012345", "61234.56")
+    id_ = compras.anadir(conn, inst, date(2026, 3, 15), "0.00012345", "61234.56", "1,25")
     assert compras.listar(conn) == [
         {
             "id": id_,
@@ -29,8 +29,49 @@ def test_anadir_y_listar(conn, inst):
             "fecha": date(2026, 3, 15),
             "participaciones": Decimal("0.00012345"),
             "precio": Decimal("61234.56"),
+            "comision": Decimal("1.25"),
         }
     ]
+
+
+def test_comision_por_defecto_es_cero(conn, inst):
+    compras.anadir(conn, inst, date(2026, 1, 1), 1, 10)
+    assert compras.listar(conn)[0]["comision"] == Decimal("0")
+
+
+@pytest.mark.parametrize("malo", ["-1", "abc", "NaN", "0.123456789"])
+def test_rechaza_comision_invalida(conn, inst, malo):
+    with pytest.raises(ValueError):
+        compras.anadir(conn, inst, date(2026, 1, 1), 1, 10, malo)
+    assert compras.listar(conn) == []
+
+
+@pytest.mark.parametrize("malo", [0.5, True, None])
+def test_rechaza_comision_float_bool_none(conn, inst, malo):
+    with pytest.raises(TypeError):
+        compras.anadir(conn, inst, date(2026, 1, 1), 1, 10, malo)
+
+
+def test_base_antigua_sin_comision_se_migra(tmp_path):
+    ruta = tmp_path / "t.sqlite3"
+    antigua = db.conectar(ruta)
+    antigua.executescript(
+        """
+        DROP VIEW compras_detalle; DROP VIEW ventas_detalle;
+        DROP TABLE compras; DROP TABLE ventas;
+        CREATE TABLE compras (id INTEGER PRIMARY KEY, instrumento_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL, participaciones TEXT NOT NULL, precio TEXT NOT NULL);
+        CREATE TABLE ventas (id INTEGER PRIMARY KEY, instrumento_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL, participaciones TEXT NOT NULL, precio TEXT NOT NULL);
+        INSERT INTO instrumentos (nombre, tipo, divisa) VALUES ('Bitcoin', 'Cripto', 'EUR');
+        INSERT INTO compras VALUES (1, 1, '2026-01-01', '2', '100');
+        """
+    )
+    antigua.close()
+    nueva = db.conectar(ruta)
+    assert compras.listar(nueva)[0]["comision"] == Decimal("0")  # la fila vieja queda a 0
+    compras.anadir(nueva, 1, date(2026, 2, 1), 1, 10, "0.5")  # y ya se pueden guardar comisiones
+    assert nueva.execute("SELECT comision FROM compras_detalle").fetchone()[0] == "0"
 
 
 def test_decimales_exactos(conn, inst):

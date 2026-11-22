@@ -21,15 +21,28 @@ CREATE TABLE IF NOT EXISTS identificadores (
 );
 CREATE INDEX IF NOT EXISTS ix_identificadores_instrumento ON identificadores(instrumento_id);
 
--- participaciones y precio van como TEXT (decimal exacto): REAL perdería precisión.
+-- participaciones, precio y comision van como TEXT (decimal exacto): REAL perdería precisión.
+-- La comision está en la divisa del instrumento (la misma en que se compró). 0 = sin comisión.
 CREATE TABLE IF NOT EXISTS compras (
     id              INTEGER PRIMARY KEY,
     instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id),
     fecha           TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
     participaciones TEXT NOT NULL CHECK (CAST(participaciones AS REAL) > 0),
-    precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0)
+    precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
+    comision        TEXT NOT NULL DEFAULT '0' CHECK (CAST(comision AS REAL) >= 0)
 );
 CREATE INDEX IF NOT EXISTS ix_compras_instrumento ON compras(instrumento_id);
+
+-- Mismas columnas que compras.
+CREATE TABLE IF NOT EXISTS ventas (
+    id              INTEGER PRIMARY KEY,
+    instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id),
+    fecha           TEXT NOT NULL CHECK (date(fecha) = fecha),  -- AAAA-MM-DD
+    participaciones TEXT NOT NULL CHECK (CAST(participaciones AS REAL) > 0),
+    precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
+    comision        TEXT NOT NULL DEFAULT '0' CHECK (CAST(comision AS REAL) >= 0)
+);
+CREATE INDEX IF NOT EXISTS ix_ventas_instrumento ON ventas(instrumento_id);
 
 -- Precio de mercado de un instrumento en una fecha (a mano). Uno por instrumento y día.
 CREATE TABLE IF NOT EXISTS precios (
@@ -39,7 +52,9 @@ CREATE TABLE IF NOT EXISTS precios (
     precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
     UNIQUE (instrumento_id, fecha)
 );
+"""
 
+_VISTAS = """
 -- Vistas para consultar en DB Browser. Se recrean en cada conexión para que los cambios
 -- de definición se apliquen también a bases ya existentes.
 DROP VIEW IF EXISTS compras_detalle;
@@ -49,11 +64,26 @@ SELECT c.id,
        d.valor AS isin,
        strftime('%d-%m-%Y', c.fecha) AS fecha,
        c.participaciones,
-       c.precio
+       c.precio,
+       c.comision
 FROM compras c
 JOIN instrumentos i ON i.id = c.instrumento_id
 LEFT JOIN identificadores d ON d.instrumento_id = i.id AND d.tipo = 'ISIN'
 ORDER BY c.fecha, c.id;
+
+DROP VIEW IF EXISTS ventas_detalle;
+CREATE VIEW ventas_detalle AS
+SELECT v.id,
+       i.nombre AS instrumento,
+       d.valor AS isin,
+       strftime('%d-%m-%Y', v.fecha) AS fecha,
+       v.participaciones,
+       v.precio,
+       v.comision
+FROM ventas v
+JOIN instrumentos i ON i.id = v.instrumento_id
+LEFT JOIN identificadores d ON d.instrumento_id = i.id AND d.tipo = 'ISIN'
+ORDER BY v.fecha, v.id;
 
 DROP VIEW IF EXISTS identificadores_detalle;
 CREATE VIEW identificadores_detalle AS
@@ -71,4 +101,18 @@ def conectar(ruta: str | Path) -> sqlite3.Connection:
     # SQLite no aplica las claves foráneas salvo que se pida en cada conexión.
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_TABLAS)
+    _anadir_comision_si_falta(conn)
+    conn.executescript(_VISTAS)
     return conn
+
+
+def _anadir_comision_si_falta(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de existir las comisiones: añade la columna (las filas viejas, a 0)."""
+    for tabla in ("compras", "ventas"):
+        columnas = [c["name"] for c in conn.execute(f"PRAGMA table_info({tabla})")]
+        if "comision" not in columnas:
+            conn.execute(
+                f"ALTER TABLE {tabla} ADD COLUMN comision "
+                "TEXT NOT NULL DEFAULT '0' CHECK (CAST(comision AS REAL) >= 0)"
+            )
+    conn.commit()

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
 
-from finanzas import cartera, compras, db, instrumentos, precios  # noqa: E402
+from finanzas import cartera, compras, db, instrumentos, precios, ventas  # noqa: E402
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
@@ -22,6 +22,10 @@ MENU = """
 5) Añadir compra
 6) Listar compras (todas o de un instrumento)
 7) Borrar compra por id
+--- Ventas ---
+10) Añadir venta
+11) Listar ventas (todas o de un instrumento)
+12) Borrar venta por id
 --- Cartera ---
 8) Resumen por instrumento
 9) Poner precio actual
@@ -44,7 +48,7 @@ def mostrar_compras(lista):
     for c in lista:
         print(
             f"{c['id']:>3} | {c['instrumento']:<20} | {c['fecha']:%d-%m-%Y} | "
-            f"{c['participaciones']} part. x {c['precio']}"
+            f"{c['participaciones']} part. x {c['precio']} | comisión {c['comision']}"
         )
 
 
@@ -93,7 +97,28 @@ def anadir_compra(conn):
     fecha = datetime.strptime(texto, "%d-%m-%Y").date()
     participaciones = input("Número de participaciones (punto o coma): ").strip()
     precio = input("Precio por participación (punto o coma): ").strip()
-    print("Añadida con id", compras.anadir(conn, instrumento_id, fecha, participaciones, precio))
+    comision = input("Comisión en la divisa del instrumento (vacío = 0): ").strip() or "0"
+    id_ = compras.anadir(conn, instrumento_id, fecha, participaciones, precio, comision)
+    print("Añadida con id", id_)
+
+
+def anadir_venta(conn):
+    mostrar_instrumentos(instrumentos.listar(conn))
+    instrumento_id = pedir_entero("Id del instrumento: ")
+    if instrumento_id is None:
+        return
+    texto = input("Fecha de ejecución (DD-MM-AAAA): ").strip()
+    fecha = datetime.strptime(texto, "%d-%m-%Y").date()
+    participaciones = input("Número de participaciones (punto o coma): ").strip()
+    precio = input("Precio por participación (punto o coma): ").strip()
+    comision = input("Comisión en la divisa del instrumento (vacío = 0): ").strip() or "0"
+    id_ = ventas.anadir(conn, instrumento_id, fecha, participaciones, precio, comision)
+    print("Añadida con id", id_)
+
+
+def listar_ventas(conn):
+    texto = input("Id de instrumento (vacío = todos): ").strip()
+    mostrar_compras(ventas.listar(conn, int(texto) if texto else None))
 
 
 def poner_precio(conn):
@@ -131,6 +156,9 @@ def main():
         "7": lambda: borrar_con_id(conn, compras),
         "8": lambda: mostrar_cartera(cartera.resumen(conn)),
         "9": lambda: poner_precio(conn),
+        "10": lambda: anadir_venta(conn),
+        "11": lambda: listar_ventas(conn),
+        "12": lambda: borrar_con_id(conn, ventas),
     }
     while True:
         print(MENU)
