@@ -55,6 +55,13 @@ dólares se ve a lo que vale hoy el dólar, no a lo que valía al comprar, así 
 incluye el efecto de la divisa solo desde hoy. Lo que no tenga precio, o tipo de cambio si no
 está en euros, no cuenta en el total y se lista aparte.
 
+## Reparto en porcentaje
+
+La opción 16 muestra qué porcentaje del valor en euros pesa cada grupo, agrupado por instrumento,
+tipo (fondo, ETF, acción...) o divisa del instrumento. Usa los mismos criterios que el total: lo
+que no tenga precio o tipo de cambio no cuenta (se lista aparte) y los porcentajes suman 100
+sobre lo valorado. En código: `cartera.reparto(conn, por)`.
+
 Las bases creadas antes de existir las comisiones se actualizan solas al conectar (la columna
 `comision` se añade y las filas antiguas quedan a 0).
 

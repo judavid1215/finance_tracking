@@ -43,3 +43,42 @@ def test_varios_instrumentos_ordenados(conn):
     compras.anadir(conn, b, date(2026, 1, 1), "1", "10")
     compras.anadir(conn, a, date(2026, 1, 1), "1", "20")
     assert [f["instrumento"] for f in cartera.resumen(conn)] == ["Apple", "Bitcoin"]
+
+
+def _comprar_valorado(conn, nombre, tipo, divisa, ident, precio):
+    from finanzas import precios
+
+    id_ = instrumentos.anadir(conn, nombre, tipo, divisa, ident)
+    compras.anadir(conn, id_, date(2026, 1, 1), "1", "10")
+    precios.anadir(conn, id_, date(2026, 11, 20), precio)
+    return id_
+
+
+def test_reparto_por_instrumento_y_tipo(conn):
+    from finanzas import divisas
+
+    _comprar_valorado(conn, "Bitcoin", "cripto", "EUR", None, "30")
+    _comprar_valorado(conn, "Apple", "accion", "USD", "AAPL", "100")  # 100 USD = 70 EUR
+    divisas.guardar(conn, "USD", date(2026, 11, 20), "0.7")
+    r = cartera.reparto(conn, "instrumento")
+    assert r["valor"] == Decimal("100.0")
+    assert [(f["grupo"], f["porcentaje"]) for f in r["filas"]] == [
+        ("Apple", Decimal("70")),
+        ("Bitcoin", Decimal("30")),
+    ]
+    por_tipo = cartera.reparto(conn, "tipo")
+    assert [f["porcentaje"] for f in por_tipo["filas"]] == [Decimal("70"), Decimal("30")]
+    por_divisa = cartera.reparto(conn, "divisa")
+    assert {f["grupo"]: f["porcentaje"] for f in por_divisa["filas"]} == {
+        "USD": Decimal("70"),
+        "EUR": Decimal("30"),
+    }
+
+
+def test_reparto_excluye_y_valida(conn):
+    id_ = instrumentos.anadir(conn, "SinPrecio", "cripto", "EUR")
+    compras.anadir(conn, id_, date(2026, 1, 1), "1", "10")
+    r = cartera.reparto(conn)
+    assert r == {"valor": None, "filas": [], "excluidos": [("SinPrecio", "sin precio")]}
+    with pytest.raises(ValueError):
+        cartera.reparto(conn, "otra")

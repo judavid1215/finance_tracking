@@ -38,6 +38,7 @@ MENU = """
 --- Cartera ---
 8) Resumen por instrumento y total en EUR
 9) Poner precio actual
+16) Reparto de la cartera en % (por instrumento, tipo o divisa)
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
 14) Actualizar precios de todo lo que se pueda (fondos, ETF, acciones y planes)
@@ -96,6 +97,24 @@ def mostrar_total(t):
 def resumen_cartera(conn):
     mostrar_cartera(cartera.resumen(conn))
     mostrar_total(cartera.total(conn))
+
+
+def mostrar_reparto(r):
+    if r["valor"] is None:
+        print("Reparto: nada valorado todavía (faltan precios o tipos de cambio)")
+    for f in r["filas"]:
+        print(f"{f['grupo']:<25} | {f['valor']:>12.2f} EUR | {f['porcentaje']:>6.2f}%")
+    for nombre, motivo in r["excluidos"]:
+        print(f"  no cuenta en el reparto: {nombre} ({motivo})")
+
+
+def reparto_cartera(conn):
+    print("Agrupar por: 1) instrumento  2) tipo  3) divisa")
+    por = {"1": "instrumento", "2": "tipo", "3": "divisa"}.get(input("Opción: ").strip())
+    if por is None:
+        print("Opción no válida")
+        return
+    mostrar_reparto(cartera.reparto(conn, por))
 
 
 def pedir_entero(texto):
@@ -243,6 +262,7 @@ def main():
         "13": lambda: actualizar_plan(conn),
         "14": lambda: actualizar_todos(conn),
         "15": lambda: poner_identificador(conn),
+        "16": lambda: reparto_cartera(conn),
     }
     while True:
         print(MENU)
