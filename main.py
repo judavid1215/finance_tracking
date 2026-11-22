@@ -41,7 +41,8 @@ MENU = """
 16) Reparto de la cartera en % (por instrumento, tipo o divisa)
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
-14) Actualizar precios de todo lo que se pueda (fondos, ETF, acciones y planes)
+14) Consultar precios de ahora (fondos, ETF, acciones, planes); no se guardan en el histórico
+17) Descargar histórico diario de precios y tipos de cambio desde la primera compra (Yahoo)
 --- ---
 0) Salir
 """
@@ -94,9 +95,9 @@ def mostrar_total(t):
         print(f"  no cuenta en el total: {nombre} ({motivo})")
 
 
-def resumen_cartera(conn):
-    mostrar_cartera(cartera.resumen(conn))
-    mostrar_total(cartera.total(conn))
+def resumen_cartera(conn, vivos):
+    mostrar_cartera(cartera.resumen(conn, vivos))
+    mostrar_total(cartera.total(conn, vivos))
 
 
 def mostrar_reparto(r):
@@ -108,13 +109,13 @@ def mostrar_reparto(r):
         print(f"  no cuenta en el reparto: {nombre} ({motivo})")
 
 
-def reparto_cartera(conn):
+def reparto_cartera(conn, vivos):
     print("Agrupar por: 1) instrumento  2) tipo  3) divisa")
     por = {"1": "instrumento", "2": "tipo", "3": "divisa"}.get(input("Opción: ").strip())
     if por is None:
         print("Opción no válida")
         return
-    mostrar_reparto(cartera.reparto(conn, por))
+    mostrar_reparto(cartera.reparto(conn, por, vivos))
 
 
 def pedir_entero(texto):
@@ -204,8 +205,10 @@ def poner_identificador(conn):
     print("Guardado")
 
 
-def actualizar_todos(conn):
-    res = actualizacion.actualizar_todos(conn)
+def consultar_todos(conn, vivos):
+    res = actualizacion.consultar_todos(conn)
+    vivos.clear()
+    vivos.update(res["vivos"])
     ok = errores = omitidos = antiguos = 0
     for f in res["filas"]:
         if f["estado"] == "ok":
@@ -232,6 +235,25 @@ def actualizar_todos(conn):
     )
 
 
+def descargar_historicos(conn):
+    filas = actualizacion.descargar_historicos(conn)
+    if not filas:
+        print("No hay fondos, ETF, acciones o cripto con compras")
+    for f in filas:
+        if f["estado"] == "ok":
+            print(
+                f"{f['nombre']}: {f['dias']} días ({f['desde']:%d-%m-%Y} a {f['hasta']:%d-%m-%Y})"
+            )
+        else:
+            print(f"{f['nombre']}: no se pudo ({f['mensaje']})")
+    for f in actualizacion.descargar_historicos_divisas(conn):
+        if f["estado"] == "ok":
+            rango = f"{f['desde']:%d-%m-%Y} a {f['hasta']:%d-%m-%Y}"
+            print(f"{f['divisa']}/EUR: {f['dias']} días ({rango})")
+        else:
+            print(f"{f['divisa']}/EUR: no se pudo ({f['mensaje']})")
+
+
 def listar_compras(conn):
     texto = input("Id de instrumento (vacío = todos): ").strip()
     mostrar_compras(compras.listar(conn, int(texto) if texto else None))
@@ -246,6 +268,9 @@ def borrar_con_id(conn, modulo):
 def main():
     conn = db.conectar(RUTA_DB)
     print(f"Base de datos: {RUTA_DB}")
+    vivos = {}  # precios y tipos de cambio de este momento; solo en memoria, no van al histórico
+    print("Consultando los precios de ahora...")
+    consultar_todos(conn, vivos)
     acciones = {
         "1": lambda: anadir_instrumento(conn),
         "2": lambda: mostrar_instrumentos(instrumentos.listar(conn)),
@@ -254,15 +279,16 @@ def main():
         "5": lambda: anadir_compra(conn),
         "6": lambda: listar_compras(conn),
         "7": lambda: borrar_con_id(conn, compras),
-        "8": lambda: resumen_cartera(conn),
+        "8": lambda: resumen_cartera(conn, vivos),
         "9": lambda: poner_precio(conn),
         "10": lambda: anadir_venta(conn),
         "11": lambda: listar_ventas(conn),
         "12": lambda: borrar_con_id(conn, ventas),
         "13": lambda: actualizar_plan(conn),
-        "14": lambda: actualizar_todos(conn),
+        "14": lambda: consultar_todos(conn, vivos),
         "15": lambda: poner_identificador(conn),
-        "16": lambda: reparto_cartera(conn),
+        "16": lambda: reparto_cartera(conn, vivos),
+        "17": lambda: descargar_historicos(conn),
     }
     while True:
         print(MENU)

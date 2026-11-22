@@ -30,3 +30,23 @@ def ultimo(conn: sqlite3.Connection, instrumento_id: int) -> Decimal | None:
         (instrumento_id,),
     ).fetchone()
     return Decimal(fila["precio"]) if fila else None
+
+
+def anadir_muchos(conn: sqlite3.Connection, instrumento_id: int, filas: list) -> int:
+    """Guarda varios (fecha, precio) de golpe; los días que ya existían se sustituyen.
+
+    Devuelve cuántas filas guardó. Mismos errores que `anadir`; si una fila falla no se
+    guarda ninguna.
+    """
+    datos = []
+    for fecha, precio in filas:
+        if not isinstance(fecha, date):
+            raise TypeError("fecha: usa datetime.date")
+        datos.append((instrumento_id, fecha.isoformat(), str(_decimal(precio, "precio"))))
+    with conn:
+        conn.executemany(
+            "INSERT INTO precios (instrumento_id, fecha, precio) VALUES (?,?,?) "
+            "ON CONFLICT (instrumento_id, fecha) DO UPDATE SET precio = excluded.precio",
+            datos,
+        )
+    return len(datos)

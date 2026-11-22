@@ -15,17 +15,28 @@ Qué hay (en `src/finanzas/`):
 - `yahoo.py` y `quefondos.py`: descargan el precio actual (ver "De dónde salen los precios").
 - `cartera.py`: resumen de lo que hay en cartera y su total en euros (`total`).
 - `divisas.py`: tipos de cambio a euros desde Yahoo (`USDEUR=X`).
-- `actualizacion.py`: actualiza de una vez el precio de todo lo que tienes (opción 14). Solo toca
-  instrumentos con participaciones, sigue si uno falla, marca los precios con más de 5 días
-  como antiguos, baja el tipo de cambio de las divisas que uses y termina con un resumen.
+- `actualizacion.py`: consulta de una vez el precio de ahora de todo lo que tienes (opción 14, y
+  también al arrancar). Solo toca instrumentos con participaciones, sigue si uno falla, marca los
+  precios con más de 5 días como antiguos, consulta el tipo de cambio de las divisas que uses y
+  termina con un resumen. También baja el histórico diario de Yahoo desde la primera compra
+  (opción 17), y el de los tipos de cambio a euros de las divisas en las que hayas comprado.
 
 Para probar a mano: `python main.py` (menú de consola).
 
 ## De dónde salen los precios
 
 Ninguna fuente es una API oficial; el precio se puede poner a mano (opción 9) o descargar
-(opciones 13 y 14 del menú). El precio se guarda con la fecha que da la fuente, que puede ser
-de unos días antes.
+(opciones 13, 14 y 17 del menú).
+
+Hay dos tipos de precio:
+
+- **Histórico** (tabla `precios`): un cierre por instrumento y día. Lo rellena la opción 17
+  (Yahoo, desde la primera compra), la opción 9 (a mano) y los planes de pensiones (13 y 14, su
+  valor liquidativo es oficial y diario). Es lo que se usará para ver la evolución en el tiempo.
+- **En vivo**: el precio de Yahoo y el tipo de cambio del momento de la consulta (al arrancar y
+  con la opción 14). Se usan para calcular la cartera (opciones 8 y 16), pero solo viven en
+  memoria mientras la aplicación está abierta: no se guardan en el histórico. Si no hay valor en
+  vivo, se usa el último guardado.
 
 | Tipo | Fuente | Se busca por |
 |---|---|---|
@@ -49,8 +60,9 @@ operaciones de cambio de divisa.
 
 ## Total en euros
 
-La opción 8 acaba con el total de la cartera en euros. Convierte con el último tipo de cambio
-guardado (opción 14 lo descarga de Yahoo), tanto el valor como lo invertido: lo invertido en
+La opción 8 acaba con el total de la cartera en euros. Convierte con el tipo de cambio del
+momento (se consulta al arrancar y con la opción 14; si no hay, el último guardado), tanto el
+valor como lo invertido: lo invertido en
 dólares se ve a lo que vale hoy el dólar, no a lo que valía al comprar, así que la ganancia
 incluye el efecto de la divisa solo desde hoy. Lo que no tenga precio, o tipo de cambio si no
 está en euros, no cuenta en el total y se lista aparte.

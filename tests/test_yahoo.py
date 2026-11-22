@@ -4,7 +4,7 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from finanzas import db, instrumentos, precios, yahoo
+from finanzas import compras, db, instrumentos, precios, yahoo
 
 
 class FakeTicker:
@@ -72,3 +72,85 @@ def test_rechaza_planes(conn):
     plan = instrumentos.anadir(conn, "Plan", "plan_pensiones", "EUR", "N5396")
     with pytest.raises(ValueError):
         yahoo.actualizar(conn, plan)
+
+
+class FakeHistorico(FakeTicker):
+    """Tres días de mercado (con un viernes y un lunes) y un hueco sin dato."""
+
+    def __init__(self, simbolo, divisa="EUR", vacio=False):
+        super().__init__(simbolo, divisa)
+        indice = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"])
+        self._h = pd.DataFrame({"Close": [10.0, 11.5, float("nan"), 12.12345]}, index=indice)
+        if vacio:
+            self._h = self._h.iloc[0:0]
+
+    def history(self, start=None, auto_adjust=True, period=None):
+        self.llamada = (start, auto_adjust)
+        return self._h
+
+
+def comprado(conn, desde="2026-01-02", divisa="EUR"):
+    id_ = instrumentos.anadir(conn, "ETF", "etf", divisa, "IE00BYX5NX33")
+    compras.anadir(conn, id_, date.fromisoformat(desde), "1", "10")
+    return id_
+
+
+def test_leer_historico_salta_huecos_y_no_ajusta(monkeypatch):
+    ticker = FakeHistorico("X")
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: ticker)
+    filas, divisa = yahoo.leer_historico("X", date(2026, 1, 2))
+    assert filas == [
+        (date(2026, 1, 2), Decimal("10.0")),
+        (date(2026, 1, 5), Decimal("11.5")),
+        (date(2026, 1, 7), Decimal("12.1235")),
+    ]
+    assert divisa == "EUR"
+    assert ticker.llamada == ("2026-01-02", False)
+
+
+def test_historico_vacio(monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: FakeHistorico(s, vacio=True))
+    with pytest.raises(ValueError):
+        yahoo.leer_historico("X", date(2026, 1, 2))
+
+
+def test_descargar_historico_desde_primera_compra(conn, monkeypatch):
+    ticker = FakeHistorico("X")
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: ticker)
+    id_ = comprado(conn, "2026-01-02")
+    compras.anadir(conn, id_, date(2026, 3, 1), "1", "10")  # una compra posterior no cambia nada
+    assert yahoo.descargar_historico(conn, id_) == (date(2026, 1, 2), date(2026, 1, 7), 3)
+    assert ticker.llamada[0] == "2026-01-02"
+    assert precios.ultimo(conn, id_) == Decimal("12.1235")
+    n = conn.execute("SELECT COUNT(*) FROM precios WHERE instrumento_id=?", (id_,)).fetchone()[0]
+    assert n == 3
+
+
+def test_descargar_historico_dos_veces_no_duplica(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeHistorico)
+    id_ = comprado(conn)
+    yahoo.descargar_historico(conn, id_)
+    yahoo.descargar_historico(conn, id_)
+    n = conn.execute("SELECT COUNT(*) FROM precios WHERE instrumento_id=?", (id_,)).fetchone()[0]
+    assert n == 3
+
+
+def test_historico_sin_compras(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeHistorico)
+    id_ = instrumentos.anadir(conn, "ETF", "etf", "EUR", "IE00BYX5NX33")
+    with pytest.raises(ValueError, match="compras"):
+        yahoo.descargar_historico(conn, id_)
+
+
+def test_historico_divisa_distinta_no_guarda(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: FakeHistorico(s, divisa="USD"))
+    id_ = comprado(conn)
+    with pytest.raises(ValueError):
+        yahoo.descargar_historico(conn, id_)
+    assert precios.ultimo(conn, id_) is None
+
+
+def test_historico_rechaza_planes(conn):
+    plan = instrumentos.anadir(conn, "Plan", "plan_pensiones", "EUR", "N5396")
+    with pytest.raises(ValueError):
+        yahoo.descargar_historico(conn, plan)

@@ -53,3 +53,20 @@ def test_cartera_con_precio_actual(conn, inst):
     assert fila["valor_actual"] == Decimal("300")
     assert fila["ganancia"] == Decimal("100")
     assert fila["rentabilidad"] == Decimal("0.5")
+
+
+def test_anadir_muchos_sustituye_y_cuenta(conn, inst):
+    precios.anadir(conn, inst, date(2026, 1, 2), "1")
+    n = precios.anadir_muchos(
+        conn, inst, [(date(2026, 1, 2), Decimal("5")), (date(2026, 1, 5), Decimal("6"))]
+    )
+    assert n == 2
+    assert precios.ultimo(conn, inst) == Decimal("6")
+    total = conn.execute("SELECT COUNT(*) FROM precios").fetchone()[0]
+    assert total == 2
+
+
+def test_anadir_muchos_todo_o_nada(conn, inst):
+    with pytest.raises(ValueError):
+        precios.anadir_muchos(conn, inst, [(date(2026, 1, 2), "5"), (date(2026, 1, 5), "-1")])
+    assert precios.ultimo(conn, inst) is None

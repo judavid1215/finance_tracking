@@ -113,21 +113,115 @@ def test_resumen_incluye_divisa(conn):
     assert cartera.resumen(conn)[0]["divisa"] == "USD"
 
 
-def test_actualizar_todos_incluye_divisas(conn, monkeypatch):
+def test_consultar_todos_incluye_divisas(conn, monkeypatch):
     comprar(conn, "Apple", "USD", "AAPL")
     comprar(conn, "Europea", "EUR", "SAN.MC")
-    monkeypatch.setattr(yahoo, "actualizar", lambda c, i: (date(2026, 11, 20), Decimal("1")))
+    monkeypatch.setattr(yahoo, "consultar", lambda c, i: (date(2026, 11, 20), Decimal("1")))
     monkeypatch.setattr(divisas.yf, "Ticker", FakeTicker)
-    res = actualizacion.actualizar_todos(conn, date(2026, 11, 22))
+    res = actualizacion.consultar_todos(conn, date(2026, 11, 22))
     assert [d["divisa"] for d in res["divisas"]] == ["USD"]  # EUR no se pide
     assert res["divisas"][0]["estado"] == "ok"
-    assert divisas.ultima(conn, "USD") == Decimal("0.923457")
+    assert res["vivos"]["tasas"] == {"USD": Decimal("0.923457")}
+    assert divisas.ultima(conn, "USD") is None  # lo vivo no se guarda
 
 
 def test_error_de_divisa_no_corta(conn, monkeypatch):
     comprar(conn, "Apple", "USD", "AAPL")
-    monkeypatch.setattr(yahoo, "actualizar", lambda c, i: (date(2026, 11, 20), Decimal("1")))
+    monkeypatch.setattr(yahoo, "consultar", lambda c, i: (date(2026, 11, 20), Decimal("1")))
     monkeypatch.setattr(divisas.yf, "Ticker", lambda s: FakeTicker(s, vacio=True))
-    res = actualizacion.actualizar_todos(conn, date(2026, 11, 22))
+    res = actualizacion.consultar_todos(conn, date(2026, 11, 22))
     assert res["filas"][0]["estado"] == "ok"
     assert res["divisas"][0]["estado"] == "error"
+
+
+def test_vivos_mandan_sobre_lo_guardado(conn):
+    id_ = comprar(conn, "Apple", "USD", "AAPL")
+    precios.anadir(conn, id_, date(2026, 11, 20), "10")
+    divisas.guardar(conn, "USD", date(2026, 11, 20), "0.5")
+    vivos = {"precios": {id_: Decimal("20")}, "tasas": {"USD": Decimal("0.9")}}
+    [fila] = cartera.resumen(conn, vivos)
+    assert fila["precio_actual"] == Decimal("20")
+    sin = cartera.total(conn)
+    con = cartera.total(conn, vivos)
+    assert con["valor"] == fila["participaciones"] * 20 * Decimal("0.9")
+    assert sin["valor"] == fila["participaciones"] * 10 * Decimal("0.5")
+    assert cartera.reparto(conn, "divisa", vivos)["valor"] == con["valor"]
+    assert precios.ultimo(conn, id_) == Decimal("10")  # nada se ha guardado
+
+
+def test_vivos_parciales_usan_lo_guardado_para_el_resto(conn):
+    id_ = comprar(conn, "Apple", "USD", "AAPL")
+    precios.anadir(conn, id_, date(2026, 11, 20), "10")
+    divisas.guardar(conn, "USD", date(2026, 11, 20), "0.5")
+    [fila] = cartera.resumen(conn, {"precios": {}, "tasas": {}})
+    assert fila["precio_actual"] == Decimal("10")
+    assert cartera.total(conn, {})["valor"] == fila["participaciones"] * 10 * Decimal("0.5")
+
+
+class FakeHistoricoDivisa:
+    """Cuatro días de mercado con un hueco sin dato; recuerda desde cuándo se le pidió."""
+
+    def __init__(self, simbolo, vacio=False):
+        self.simbolo = simbolo
+        indice = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"])
+        self._h = pd.DataFrame({"Close": [0.9, 0.95, float("nan"), 0.9234567891]}, index=indice)
+        if vacio:
+            self._h = self._h.iloc[0:0]
+
+    def history(self, start=None, period=None):
+        self.start = start
+        return self._h
+
+
+def test_leer_historico_divisa_salta_huecos(monkeypatch):
+    t = FakeHistoricoDivisa("x")
+    monkeypatch.setattr(divisas.yf, "Ticker", lambda s: t)
+    assert divisas.leer_historico("usd", date(2026, 1, 2)) == [
+        (date(2026, 1, 2), Decimal("0.9")),
+        (date(2026, 1, 5), Decimal("0.95")),
+        (date(2026, 1, 7), Decimal("0.923457")),
+    ]
+    assert t.simbolo == "x" and t.start == "2026-01-02"
+
+
+def test_descargar_historico_desde_primera_compra_en_esa_divisa(conn, monkeypatch):
+    t = FakeHistoricoDivisa("x")
+    monkeypatch.setattr(divisas.yf, "Ticker", lambda s: t)
+    comprar(conn, "Apple", "USD", "AAPL")  # 2026-01-01
+    otro = instrumentos.anadir(conn, "Nvidia", "accion", "USD", "NVDA")
+    compras.anadir(conn, otro, date(2025, 6, 1), "1", "10")  # la más antigua en USD
+    comprar(conn, "Europea", "EUR", "SAN.MC")
+    assert divisas.descargar_historico(conn, "usd") == (date(2026, 1, 2), date(2026, 1, 7), 3)
+    assert t.start == "2025-06-01"
+    assert divisas.ultima(conn, "USD") == Decimal("0.923457")
+    divisas.descargar_historico(conn, "USD")  # repetir no duplica
+    n = conn.execute("SELECT COUNT(*) FROM tipos_cambio").fetchone()[0]
+    assert n == 3
+
+
+def test_descargar_historico_divisa_errores(conn, monkeypatch):
+    monkeypatch.setattr(divisas.yf, "Ticker", lambda s: FakeHistoricoDivisa(s, vacio=True))
+    with pytest.raises(ValueError):
+        divisas.descargar_historico(conn, "EUR")
+    with pytest.raises(ValueError, match="compras"):
+        divisas.descargar_historico(conn, "USD")
+    comprar(conn, "Apple", "USD", "AAPL")
+    with pytest.raises(ValueError, match="histórico"):
+        divisas.descargar_historico(conn, "USD")
+
+
+def test_descargar_historicos_divisas_solo_las_usadas(conn, monkeypatch):
+    monkeypatch.setattr(divisas.yf, "Ticker", FakeHistoricoDivisa)
+    comprar(conn, "Apple", "USD", "AAPL")
+    comprar(conn, "Europea", "EUR", "SAN.MC")
+    instrumentos.anadir(conn, "Sin compras", "accion", "GBP", "VOD.L")
+    filas = actualizacion.descargar_historicos_divisas(conn)
+    assert [(f["divisa"], f["estado"], f["dias"]) for f in filas] == [("USD", "ok", 3)]
+
+
+def test_descargar_historicos_divisas_sigue_si_falla(conn, monkeypatch):
+    monkeypatch.setattr(divisas.yf, "Ticker", lambda s: FakeHistoricoDivisa(s, vacio="GBP" in s))
+    comprar(conn, "Apple", "USD", "AAPL")
+    comprar(conn, "Vodafone", "GBP", "VOD.L")
+    filas = actualizacion.descargar_historicos_divisas(conn)
+    assert [(f["divisa"], f["estado"]) for f in filas] == [("GBP", "error"), ("USD", "ok")]
