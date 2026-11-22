@@ -1,6 +1,6 @@
 # Finanzas
 
-Seguimiento personal de inversiones. Python 3.12 + SQLite (módulo estándar `sqlite3`).
+Seguimiento personal de inversiones. Python 3.12 + SQLite (módulo estándar `sqlite3`) + yfinance para los precios.
 
 Qué hay (en `src/finanzas/`):
 
@@ -11,10 +11,33 @@ Qué hay (en `src/finanzas/`):
   (una venta quita participaciones al precio medio que había). No deja vender de más.
   La comisión de una compra encarece el coste (sube lo invertido y el precio medio); la de
   una venta no cambia la posición, solo se guarda.
-- `precios.py`: precio actual puesto a mano.
+- `precios.py`: guarda el precio de un instrumento por fecha (a mano o automático).
+- `yahoo.py` y `quefondos.py`: descargan el precio actual (ver "De dónde salen los precios").
 - `cartera.py`: resumen de lo que hay en cartera.
 
 Para probar a mano: `python main.py` (menú de consola).
+
+## De dónde salen los precios
+
+Ninguna fuente es una API oficial; el precio se puede poner a mano (opción 9) o descargar
+(opciones 13 y 14 del menú). El precio se guarda con la fecha que da la fuente, que puede ser
+de unos días antes.
+
+| Tipo | Fuente | Se busca por |
+|---|---|---|
+| Fondo, ETF | [yfinance](https://github.com/ranaroussi/yfinance) (Yahoo Finance) | ISIN |
+| Acción | yfinance | ticker (ej. `NVDA`) |
+| Cripto | yfinance | ticker de Yahoo (ej. `BTC-EUR`), opcional |
+| Plan de pensiones | [Quefondos](https://www.quefondos.com) (lee su web) | código DGS (ej. `N5396`) |
+
+- **yfinance** es gratis y no oficial; Yahoo puede cambiar o limitar el acceso. Si Yahoo da el
+  precio en otra divisa que la del instrumento (un ETF que cotiza en USD en esa bolsa), no se
+  guarda y se avisa.
+- **Quefondos** no tiene API: se lee el valor liquidativo de su página con una expresión
+  regular. Si cambian la web, saldrá un error claro y habrá que ajustar `quefondos.py`.
+- **Morningstar** se descartó: su API es de pago (institucional) y las librerías no oficiales
+  necesitan Chrome con ventana. Finect no tiene API documentada.
+- Una cripto sin ticker no se actualiza sola: usa la opción 15 para ponérselo.
 
 No incluido todavía: cálculo de impuestos (en España las ventas se imputan por FIFO, se hará
 cuando se aborde; ahí se restará la comisión de venta al ingreso), traspasos entre fondos ni
@@ -31,6 +54,6 @@ cero, borra antes `data/finanzas.sqlite3`.
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\pip install pytest ruff
+.\.venv\Scripts\pip install pytest ruff yfinance
 .\.venv\Scripts\python -m pytest -v
 ```
