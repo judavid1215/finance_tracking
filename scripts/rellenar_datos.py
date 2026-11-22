@@ -1,12 +1,18 @@
-"""Rellena la base con datos inventados: Bitcoin, MSCI World, S&P 500, NVIDIA, Apple
+"""Rellena la base con compras y ventas de ejemplo: Bitcoin, MSCI World, S&P 500, NVIDIA, Apple
 y un plan de pensiones.
 
 Uso: python scripts/rellenar_datos.py
-Los precios e importes son inventados (los ISIN de los ETF, los tickers y el código DGS del
-plan son reales). Cada instrumento recibe
-12 compras mensuales y 2 ventas, con comisiones del 0–1 % en la divisa del instrumento.
+Las fechas, las cantidades y las comisiones (0–1 %, en la divisa del instrumento) son
+inventadas, pero los precios son reales: cada operación se hace el primer día de mercado desde
+su fecha de ejemplo, al cierre que Yahoo tuvo ese día. Necesita conexión; si Yahoo falla con un
+instrumento, se omite sin crearlo y se puede reintentar ejecutando el script otra vez.
+El plan de pensiones no tiene histórico (Quefondos no lo da), así que sus precios sí son
+inventados. Cada instrumento recibe 12 compras mensuales y 2 ventas (las de los meses que
+todavía no tienen un día de mercado cerrado se saltan).
+No se guarda ningún precio actual: el del momento se consulta al abrir la aplicación y el
+histórico se baja con la opción 17.
 Si un instrumento ya existe, no se toca ni se le añaden compras ni ventas (así se puede
-ejecutar varias veces sin duplicar).
+ejecutar varias veces sin duplicar); para empezar de cero, borra data/finanzas.sqlite3.
 """
 
 import random
@@ -18,12 +24,12 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
-from finanzas import compras, db, instrumentos, precios, ventas  # noqa: E402
+from finanzas import compras, db, instrumentos, ventas, yahoo  # noqa: E402
 
 RUTA_DB = RAIZ / "data" / "finanzas.sqlite3"
 
-# nombre, tipo, divisa, identificador (ISIN, ticker o código DGS), precio inicial,
-# decimales de participaciones
+# nombre, tipo, divisa, identificador (ISIN, ticker o código DGS), precio inicial (solo para el
+# plan, que no tiene histórico real), decimales de participaciones
 CARTERAS = [
     ("Bitcoin", "Cripto", "EUR", "BTC-EUR", Decimal("30000"), 8),
     ("MSCI World", "ETF", "EUR", "IE00BYX5NX33", Decimal("85"), 4),
@@ -50,8 +56,26 @@ def comision(importe: Decimal, rng: random.Random) -> Decimal:
     return (importe * Decimal(rng.randint(0, 100)) / 10000).quantize(Decimal("0.01"))
 
 
-def rellenar(conn, rng: random.Random) -> None:
+def precio_real(historico: list, desde: date) -> tuple[date, Decimal] | None:
+    """(fecha, cierre) del primer día de mercado desde `desde`, o None si aún no hay ninguno."""
+    return next(((f, p) for f, p in historico if f >= desde), None)
+
+
+def rellenar(conn, rng: random.Random, hoy: date | None = None) -> None:
+    hoy = hoy or date.today()
     for nombre, tipo, divisa, identificador, precio, decimales in CARTERAS:
+        real = tipo != "Plan_pensiones"
+        historico = []
+        if real:
+            try:
+                historico, divisa_yahoo = yahoo.leer_historico(identificador, fecha_mes(MESES - 1))
+            except (ValueError, OSError) as e:
+                print(f"Se omite {nombre}: no se pudo leer el histórico de Yahoo ({e})")
+                continue
+            if divisa_yahoo != divisa:
+                print(f"Se omite {nombre}: Yahoo lo da en {divisa_yahoo} y no en {divisa}")
+                continue
+            historico = [(f, p) for f, p in historico if f < hoy]  # el de hoy puede ir a medias
         try:
             id_ = instrumentos.anadir(conn, nombre, tipo, divisa, identificador)
         except ValueError as e:
@@ -59,32 +83,45 @@ def rellenar(conn, rng: random.Random) -> None:
             continue
         quantum = Decimal(1).scaleb(-decimales)
         en_cartera = Decimal(0)  # participaciones que se tienen en cada momento
-        n_ventas = 0
+        n_compras = n_ventas = 0
         for atras in range(MESES - 1, -1, -1):
-            # El precio varía como mucho un ±8 % (±20 % en cripto) respecto al mes anterior.
-            tope = 20 if tipo == "Cripto" else 8
-            precio = (precio * (1 + Decimal(rng.randint(-tope, tope)) / 100)).quantize(
-                Decimal("0.01")
-            )
+            fecha_compra = fecha_mes(atras)
+            if real:
+                dia = precio_real(historico, fecha_compra)
+                if dia is None:
+                    continue  # todavía no hay día de mercado cerrado desde esa fecha
+                fecha_compra, precio = dia
+            else:
+                # Precio inventado: varía como mucho un ±8 % respecto al mes anterior.
+                precio = (precio * (1 + Decimal(rng.randint(-8, 8)) / 100)).quantize(
+                    Decimal("0.01")
+                )
             invertido = Decimal(rng.randrange(100, 501, 25))  # 100–500 € en pasos de 25
             participaciones = (invertido / precio).quantize(quantum, rounding=ROUND_DOWN)
             comision_compra = comision(participaciones * precio, rng)
-            compras.anadir(conn, id_, fecha_mes(atras), participaciones, precio, comision_compra)
+            compras.anadir(conn, id_, fecha_compra, participaciones, precio, comision_compra)
             en_cartera += participaciones
+            n_compras += 1
             if atras in MESES_CON_VENTA:
-                # Vende entre el 25 % y el 50 % de lo que tiene, el día 20 (tras la compra del 5).
+                # Vende entre el 25 % y el 50 % de lo que tiene, a partir del día 20.
+                fecha_venta = fecha_mes(atras).replace(day=20)
+                if real:
+                    dia = precio_real(historico, fecha_venta)
+                    if dia is None:
+                        continue
+                    fecha_venta, precio_venta = dia
+                else:
+                    precio_venta = (precio * (1 + Decimal(rng.randint(-5, 5)) / 100)).quantize(
+                        Decimal("0.01")
+                    )
                 parte = Decimal(rng.randint(25, 50)) / 100
                 a_vender = (en_cartera * parte).quantize(quantum, rounding=ROUND_DOWN)
-                precio_venta = (precio * (1 + Decimal(rng.randint(-5, 5)) / 100)).quantize(
-                    Decimal("0.01")
-                )
                 comision_venta = comision(a_vender * precio_venta, rng)
-                fecha_venta = fecha_mes(atras).replace(day=20)
                 ventas.anadir(conn, id_, fecha_venta, a_vender, precio_venta, comision_venta)
                 en_cartera -= a_vender
                 n_ventas += 1
-        precios.anadir(conn, id_, date.today(), precio)  # precio actual = el último simulado
-        print(f"{nombre}: {MESES} compras, {n_ventas} ventas y precio actual añadidos")
+        origen = "precios reales de Yahoo" if real else "precios inventados"
+        print(f"{nombre}: {n_compras} compras y {n_ventas} ventas añadidas ({origen})")
 
 
 def main() -> None:

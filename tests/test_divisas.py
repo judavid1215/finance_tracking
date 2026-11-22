@@ -225,3 +225,32 @@ def test_descargar_historicos_divisas_sigue_si_falla(conn, monkeypatch):
     comprar(conn, "Vodafone", "GBP", "VOD.L")
     filas = actualizacion.descargar_historicos_divisas(conn)
     assert [(f["divisa"], f["estado"]) for f in filas] == [("GBP", "error"), ("USD", "ok")]
+
+
+class FakeFiltradoDivisa(FakeHistoricoDivisa):
+    llamadas: list = []
+
+    def history(self, start=None, period=None):
+        FakeFiltradoDivisa.llamadas.append(start)
+        return self._h[self._h.index >= pd.Timestamp(start)]
+
+
+def test_divisa_solo_baja_lo_que_falta_y_no_guarda_hoy(conn, monkeypatch):
+    FakeFiltradoDivisa.llamadas = []
+    monkeypatch.setattr(divisas.yf, "Ticker", FakeFiltradoDivisa)
+    nvidia = instrumentos.anadir(conn, "Nvidia", "accion", "USD", "NVDA")
+    compras.anadir(conn, nvidia, date(2026, 1, 2), "1", "10")
+    assert divisas.descargar_historico(conn, "USD", date(2026, 1, 6)) == (
+        date(2026, 1, 2),
+        date(2026, 1, 5),
+        2,
+    )
+    assert divisas.descargar_historico(conn, "USD", date(2026, 1, 6)) == (None, None, 0)
+    assert divisas.descargar_historico(conn, "USD", date(2026, 1, 8)) == (
+        date(2026, 1, 7),
+        date(2026, 1, 7),
+        1,
+    )
+    assert FakeFiltradoDivisa.llamadas == ["2026-01-02", "2026-01-05", "2026-01-05"]
+    n = conn.execute("SELECT COUNT(*) FROM tipos_cambio").fetchone()[0]
+    assert n == 3

@@ -235,21 +235,24 @@ def consultar_todos(conn, vivos):
     )
 
 
+def _rango(f):
+    if f["dias"] == 0:
+        return "ya estaba al día"
+    return f"{f['dias']} días nuevos ({f['desde']:%d-%m-%Y} a {f['hasta']:%d-%m-%Y})"
+
+
 def descargar_historicos(conn):
     filas = actualizacion.descargar_historicos(conn)
     if not filas:
         print("No hay fondos, ETF, acciones o cripto con compras")
     for f in filas:
         if f["estado"] == "ok":
-            print(
-                f"{f['nombre']}: {f['dias']} días ({f['desde']:%d-%m-%Y} a {f['hasta']:%d-%m-%Y})"
-            )
+            print(f"{f['nombre']}: {_rango(f)}")
         else:
             print(f"{f['nombre']}: no se pudo ({f['mensaje']})")
     for f in actualizacion.descargar_historicos_divisas(conn):
         if f["estado"] == "ok":
-            rango = f"{f['desde']:%d-%m-%Y} a {f['hasta']:%d-%m-%Y}"
-            print(f"{f['divisa']}/EUR: {f['dias']} días ({rango})")
+            print(f"{f['divisa']}/EUR: {_rango(f)}")
         else:
             print(f"{f['divisa']}/EUR: no se pudo ({f['mensaje']})")
 

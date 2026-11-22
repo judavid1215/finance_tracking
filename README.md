@@ -18,8 +18,9 @@ Qué hay (en `src/finanzas/`):
 - `actualizacion.py`: consulta de una vez el precio de ahora de todo lo que tienes (opción 14, y
   también al arrancar). Solo toca instrumentos con participaciones, sigue si uno falla, marca los
   precios con más de 5 días como antiguos, consulta el tipo de cambio de las divisas que uses y
-  termina con un resumen. También baja el histórico diario de Yahoo desde la primera compra
-  (opción 17), y el de los tipos de cambio a euros de las divisas en las que hayas comprado.
+  termina con un resumen. También baja el histórico diario de Yahoo (opción 17): precios y tipos
+  de cambio a euros. La primera vez desde la primera compra; después solo los días que faltan.
+  El día de hoy no se guarda (su cierre puede estar a medias); entra completo en la siguiente.
 
 Para probar a mano: `python main.py` (menú de consola).
 
@@ -77,9 +78,11 @@ sobre lo valorado. En código: `cartera.reparto(conn, por)`.
 Las bases creadas antes de existir las comisiones se actualizan solas al conectar (la columna
 `comision` se añade y las filas antiguas quedan a 0).
 
-Para rellenar la base con datos inventados (compras, ventas y comisiones):
-`python scripts/rellenar_datos.py`. Si un instrumento ya existe se salta; para empezar de
-cero, borra antes `data/finanzas.sqlite3`.
+Para rellenar la base con compras y ventas de ejemplo: `python scripts/rellenar_datos.py`.
+Las fechas, cantidades y comisiones son inventadas, pero los precios son reales (cierre de
+Yahoo del día de cada operación); solo el plan de pensiones, sin histórico, lleva precios
+inventados. Necesita conexión. Si un instrumento ya existe se salta; para empezar de cero,
+borra antes `data/finanzas.sqlite3`. Después, la opción 17 baja el histórico.
 
 ## Probar
 

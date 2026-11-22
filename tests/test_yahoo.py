@@ -154,3 +154,60 @@ def test_historico_rechaza_planes(conn):
     plan = instrumentos.anadir(conn, "Plan", "plan_pensiones", "EUR", "N5396")
     with pytest.raises(ValueError):
         yahoo.descargar_historico(conn, plan)
+
+
+class FakeFiltrado(FakeHistorico):
+    """Como FakeHistorico, pero solo devuelve lo posterior o igual a `start`, y cuenta llamadas."""
+
+    llamadas: list = []
+
+    def history(self, start=None, auto_adjust=True, period=None):
+        FakeFiltrado.llamadas.append(start)
+        return self._h[self._h.index >= pd.Timestamp(start)]
+
+
+def test_segunda_descarga_solo_baja_lo_que_falta(conn, monkeypatch):
+    FakeFiltrado.llamadas = []
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeFiltrado)
+    id_ = comprado(conn, "2026-01-02")
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 6)) == (
+        date(2026, 1, 2),
+        date(2026, 1, 5),
+        2,
+    )  # el 6 (hoy) no se guarda; el hueco del 6 de la fake no cuenta
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 6)) == (None, None, 0)
+    # al día siguiente solo llega lo nuevo (el 7); se pide desde el último día guardado (el 5)
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 8)) == (
+        date(2026, 1, 7),
+        date(2026, 1, 7),
+        1,
+    )
+    assert FakeFiltrado.llamadas == ["2026-01-02", "2026-01-05", "2026-01-05"]
+    n = conn.execute("SELECT COUNT(*) FROM precios WHERE instrumento_id=?", (id_,)).fetchone()[0]
+    assert n == 3
+
+
+def test_si_ya_esta_al_dia_no_llama_a_yahoo(conn, monkeypatch):
+    FakeFiltrado.llamadas = []
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeFiltrado)
+    id_ = comprado(conn, "2026-01-02")
+    precios.anadir(conn, id_, date(2026, 1, 2), "10")
+    precios.anadir(conn, id_, date(2026, 1, 7), "10")
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 7)) == (None, None, 0)
+    assert FakeFiltrado.llamadas == []
+
+
+def test_hoy_no_se_guarda(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeFiltrado)
+    id_ = comprado(conn, "2026-01-02")
+    yahoo.descargar_historico(conn, id_, date(2026, 1, 5))  # solo el día 2 es anterior a hoy
+    assert precios.rango(conn, id_) == (date(2026, 1, 2), date(2026, 1, 2))
+
+
+def test_compra_antigua_nueva_vuelve_a_bajar_todo(conn, monkeypatch):
+    FakeFiltrado.llamadas = []
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeFiltrado)
+    id_ = comprado(conn, "2026-01-02")
+    precios.anadir(conn, id_, date(2026, 3, 1), "10")  # lo guardado empieza mucho después
+    yahoo.descargar_historico(conn, id_, date(2026, 12, 1))
+    assert FakeFiltrado.llamadas == ["2026-01-02"]

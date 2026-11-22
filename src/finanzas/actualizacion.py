@@ -87,9 +87,10 @@ def _consultar_divisas(usadas):
 
 
 def descargar_historicos(conn: sqlite3.Connection) -> list[dict]:
-    """Descarga el histórico diario (desde la primera compra) de cada fondo, ETF, acción y
-    cripto con compras. Sigue si uno falla. Cada fila lleva "nombre" y "estado": "ok" (con
-    "desde", "hasta" y "dias") o "error" (con "mensaje"). Los planes de pensiones no entran."""
+    """Descarga el histórico diario que falta (la primera vez desde la primera compra, luego
+    solo los días nuevos) de cada fondo, ETF, acción y cripto con compras. Sigue si uno falla.
+    Cada fila lleva "nombre" y "estado": "ok" (con "desde", "hasta" y "dias" nuevos; 0 si ya
+    estaba al día) o "error" (con "mensaje"). Los planes de pensiones no entran."""
     filas = []
     for inst in instrumentos.listar(conn):
         if inst["id_tipo"] not in yahoo.TIPOS_ID:
@@ -111,9 +112,9 @@ def descargar_historicos(conn: sqlite3.Connection) -> list[dict]:
 
 
 def descargar_historicos_divisas(conn: sqlite3.Connection) -> list[dict]:
-    """Descarga el tipo de cambio diario a euros (desde la primera compra) de cada divisa
-    distinta del euro en la que hayas comprado algo. Sigue si una falla. Cada fila lleva
-    "divisa" y "estado": "ok" (con "desde", "hasta" y "dias") o "error" (con "mensaje")."""
+    """Descarga el tipo de cambio diario a euros que falta (como `descargar_historicos`) de
+    cada divisa distinta del euro en la que hayas comprado algo. Sigue si una falla. Cada fila
+    lleva "divisa" y "estado": "ok" (con "desde", "hasta" y "dias" nuevos) o "error"."""
     usadas = conn.execute(
         "SELECT DISTINCT i.divisa FROM instrumentos i "
         "JOIN compras c ON c.instrumento_id = i.id WHERE i.divisa != ? ORDER BY i.divisa",

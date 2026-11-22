@@ -1,7 +1,7 @@
 """Precios de mercado puestos a mano. Siempre Decimal."""
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from finanzas.compras import _decimal
@@ -50,3 +50,30 @@ def anadir_muchos(conn: sqlite3.Connection, instrumento_id: int, filas: list) ->
             datos,
         )
     return len(datos)
+
+
+# Si lo guardado empieza más tarde que la primera compra + estos días, se vuelve a bajar todo
+# (p. ej. se añadió después una compra más antigua). Un margen, porque una compra en fin de
+# semana o festivo tiene su primer precio unos días después.
+MARGEN_INICIO = 7
+
+
+def desde_descarga(primera_compra: date, guardado: tuple[date, date] | None) -> date:
+    """Desde qué fecha hay que descargar el histórico de un instrumento o divisa.
+
+    `guardado` es (primera fecha, última fecha) de lo que ya hay en la base, o None si no hay
+    nada. Sin datos, o con datos que empiezan tarde, se baja desde la primera compra; si no,
+    desde la última fecha guardada (se vuelve a bajar ese día por si estaba a medias).
+    """
+    if guardado is None or guardado[0] > primera_compra + timedelta(days=MARGEN_INICIO):
+        return primera_compra
+    return guardado[1]
+
+
+def rango(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, date] | None:
+    """(primera fecha, última fecha) con precio guardado del instrumento, o None si no hay."""
+    fila = conn.execute(
+        "SELECT MIN(fecha) AS a, MAX(fecha) AS b FROM precios WHERE instrumento_id = ?",
+        (instrumento_id,),
+    ).fetchone()
+    return (date.fromisoformat(fila["a"]), date.fromisoformat(fila["b"])) if fila["a"] else None

@@ -70,3 +70,18 @@ def test_anadir_muchos_todo_o_nada(conn, inst):
     with pytest.raises(ValueError):
         precios.anadir_muchos(conn, inst, [(date(2026, 1, 2), "5"), (date(2026, 1, 5), "-1")])
     assert precios.ultimo(conn, inst) is None
+
+
+def test_desde_descarga():
+    compra = date(2026, 1, 2)
+    assert precios.desde_descarga(compra, None) == compra
+    assert precios.desde_descarga(compra, (date(2026, 1, 5), date(2026, 3, 1))) == date(2026, 3, 1)
+    # lo guardado empieza muy tarde (compra más antigua añadida después): se baja todo
+    assert precios.desde_descarga(compra, (date(2026, 2, 1), date(2026, 3, 1))) == compra
+
+
+def test_rango(conn, inst):
+    assert precios.rango(conn, inst) is None
+    precios.anadir(conn, inst, date(2026, 1, 5), "1")
+    precios.anadir(conn, inst, date(2026, 1, 2), "1")
+    assert precios.rango(conn, inst) == (date(2026, 1, 2), date(2026, 1, 5))

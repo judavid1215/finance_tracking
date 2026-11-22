@@ -55,17 +55,22 @@ def actualizar(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, Dec
     return fecha, precio
 
 
-def leer_historico(simbolo: str, desde: date) -> tuple[list[tuple[date, Decimal]], str]:
+def leer_historico(
+    simbolo: str, desde: date, permitir_vacio: bool = False
+) -> tuple[list[tuple[date, Decimal]], str | None]:
     """Devuelve ([(fecha, cierre), ...], divisa): un cierre por cada día de mercado desde `desde`.
 
     Es el cierre sin ajustar por dividendos (auto_adjust=False), el precio al que se
     habría comprado o vendido ese día. Los días sin cotización (fines de semana, festivos)
-    no aparecen. Lanza ValueError si Yahoo no tiene datos; los fallos de red llegan como error.
+    no aparecen. Si Yahoo no tiene datos lanza ValueError, salvo con permitir_vacio=True, que
+    devuelve ([], None). Los fallos de red llegan como error.
     """
     ticker = yf.Ticker(simbolo)
     historico = ticker.history(start=desde.isoformat(), auto_adjust=False)
     cierres = historico["Close"].dropna() if not historico.empty else historico
     if len(cierres) == 0:
+        if permitir_vacio:
+            return [], None
         raise ValueError(f"Yahoo no tiene histórico para {simbolo} desde {desde:%d-%m-%Y}")
     divisa = ticker.fast_info["currency"]
     filas = [
@@ -74,13 +79,19 @@ def leer_historico(simbolo: str, desde: date) -> tuple[list[tuple[date, Decimal]
     return filas, str(divisa).upper()
 
 
-def descargar_historico(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, date, int]:
-    """Guarda el precio día a día desde la compra más antigua hasta hoy.
+def descargar_historico(
+    conn: sqlite3.Connection, instrumento_id: int, hoy: date | None = None
+) -> tuple[date | None, date | None, int]:
+    """Guarda los precios diarios que faltan, desde la compra más antigua hasta ayer.
 
-    Devuelve (primera fecha, última fecha, nº de días guardados). Los días que ya tenían
-    precio se sustituyen. Mismos errores que `actualizar`; además ValueError si el
+    La primera vez baja desde la primera compra; después, solo desde el último día guardado.
+    El día de hoy no se guarda: su cierre puede estar a medias (el precio del momento se usa
+    en vivo, ver `consultar`); se guardará completo en la próxima descarga.
+    Devuelve (primera fecha nueva, última fecha nueva, nº de días nuevos); si no había nada
+    nuevo, (None, None, 0). Mismos errores que `actualizar`; además ValueError si el
     instrumento no tiene compras.
     """
+    hoy = hoy or date.today()
     inst = instrumentos.obtener(conn, instrumento_id)
     if inst is None or inst["id_tipo"] not in TIPOS_ID:
         raise ValueError("Solo se descarga de un fondo, ETF, acción o cripto con identificador")
@@ -89,11 +100,21 @@ def descargar_historico(conn: sqlite3.Connection, instrumento_id: int) -> tuple[
     ).fetchone()
     if fila["primera"] is None:
         raise ValueError("El instrumento no tiene compras: no se sabe desde cuándo descargar")
-    filas, divisa = leer_historico(inst["identificador"], date.fromisoformat(fila["primera"]))
+    guardado = precios.rango(conn, instrumento_id)
+    desde = precios.desde_descarga(date.fromisoformat(fila["primera"]), guardado)
+    if desde >= hoy:
+        return None, None, 0
+    filas, divisa = leer_historico(inst["identificador"], desde, permitir_vacio=bool(guardado))
+    filas = [(f, p) for f, p in filas if f < hoy]
+    if not filas:
+        if guardado:
+            return None, None, 0
+        raise ValueError(f"Yahoo no tiene histórico para {inst['identificador']} hasta ayer")
     if divisa != inst["divisa"]:
         raise ValueError(
             f"Yahoo da {inst['identificador']} en {divisa}, pero el instrumento está en "
             f"{inst['divisa']}; no se guarda"
         )
     precios.anadir_muchos(conn, instrumento_id, filas)
-    return filas[0][0], filas[-1][0], len(filas)
+    nuevas = [f for f, _ in filas if guardado is None or f > guardado[1]]
+    return (nuevas[0], nuevas[-1], len(nuevas)) if nuevas else (None, None, 0)
