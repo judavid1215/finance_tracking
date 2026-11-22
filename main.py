@@ -1,0 +1,121 @@
+"""Menú de consola para probar la base de datos a mano. Uso: python main.py"""
+
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
+
+from finanzas import compras, db, instrumentos  # noqa: E402
+
+# Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
+RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
+
+MENU = """
+--- Instrumentos ---
+1) Añadir instrumento
+2) Listar todos
+3) Listar por tipo
+4) Borrar por id
+--- Compras ---
+5) Añadir compra
+6) Listar compras (todas o de un instrumento)
+7) Borrar compra por id
+--- ---
+0) Salir
+"""
+
+
+def mostrar_instrumentos(filas):
+    if not filas:
+        print("(vacío)")
+    for f in filas:
+        ident = f"{f['id_tipo']} {f['identificador']}" if f["identificador"] else "-"
+        print(f"{f['id']:>3} | {f['nombre']:<25} | {f['tipo']:<15} | {f['divisa']} | {ident}")
+
+
+def mostrar_compras(lista):
+    if not lista:
+        print("(vacío)")
+    for c in lista:
+        print(
+            f"{c['id']:>3} | {c['instrumento']:<20} | {c['fecha']:%d-%m-%Y} | "
+            f"{c['participaciones']} part. x {c['precio']}"
+        )
+
+
+def pedir_entero(texto):
+    try:
+        return int(input(texto))
+    except ValueError:
+        print("Escribe un número entero.")
+        return None
+
+
+def anadir_instrumento(conn):
+    nombre = input("Nombre: ").strip()
+    print("Tipos:", ", ".join(instrumentos.TIPOS))
+    tipo = input("Tipo: ").strip()
+    divisa = input("Divisa (3 letras, ej. EUR): ").strip().upper()
+    identificador = None
+    pide = instrumentos.IDENTIFICADOR_POR_TIPO.get(instrumentos.normalizar_tipo(tipo))
+    if pide:
+        identificador = input(f"{pide}: ").strip()
+    print("Añadido con id", instrumentos.anadir(conn, nombre, tipo, divisa, identificador))
+
+
+def anadir_compra(conn):
+    mostrar_instrumentos(instrumentos.listar(conn))
+    instrumento_id = pedir_entero("Id del instrumento: ")
+    if instrumento_id is None:
+        return
+    texto = input("Fecha de ejecución (DD-MM-AAAA): ").strip()
+    fecha = datetime.strptime(texto, "%d-%m-%Y").date()
+    participaciones = input("Número de participaciones (punto o coma): ").strip()
+    precio = input("Precio por participación (punto o coma): ").strip()
+    print("Añadida con id", compras.anadir(conn, instrumento_id, fecha, participaciones, precio))
+
+
+def listar_compras(conn):
+    texto = input("Id de instrumento (vacío = todos): ").strip()
+    mostrar_compras(compras.listar(conn, int(texto) if texto else None))
+
+
+def borrar_con_id(conn, modulo):
+    id_ = pedir_entero("Id a borrar: ")
+    if id_ is not None:
+        print("Borrado" if modulo.borrar(conn, id_) else "No existe ese id")
+
+
+def main():
+    conn = db.conectar(RUTA_DB)
+    print(f"Base de datos: {RUTA_DB}")
+    acciones = {
+        "1": lambda: anadir_instrumento(conn),
+        "2": lambda: mostrar_instrumentos(instrumentos.listar(conn)),
+        "3": lambda: mostrar_instrumentos(instrumentos.listar(conn, input("Tipo: ").strip())),
+        "4": lambda: borrar_con_id(conn, instrumentos),
+        "5": lambda: anadir_compra(conn),
+        "6": lambda: listar_compras(conn),
+        "7": lambda: borrar_con_id(conn, compras),
+    }
+    while True:
+        print(MENU)
+        opcion = input("Opción: ").strip()
+        if opcion == "0":
+            break
+        accion = acciones.get(opcion)
+        if accion is None:
+            print("Opción no válida")
+            continue
+        try:
+            accion()
+        except (sqlite3.IntegrityError, ValueError, TypeError) as e:
+            # Errores esperados de datos inválidos; el menú sigue funcionando.
+            print("Rechazado:", e)
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()
