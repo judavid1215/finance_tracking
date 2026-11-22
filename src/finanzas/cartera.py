@@ -3,7 +3,7 @@
 import sqlite3
 from decimal import Decimal
 
-from finanzas import compras, divisas, instrumentos, posicion, precios
+from finanzas import compras, divisas, grupos, instrumentos, posicion, precios
 
 
 def _precio(conn, instrumento_id, vivos):
@@ -107,6 +107,18 @@ def total(conn: sqlite3.Connection, vivos: dict | None = None, grupo_id: int | N
         resultado.update(invertido=invertido, valor=valor, ganancia=valor - invertido)
         resultado["rentabilidad"] = (valor - invertido) / invertido if invertido else None
     return resultado
+
+
+def por_grupo(conn: sqlite3.Connection, vivos: dict | None = None) -> list[dict]:
+    """Invertido, valor, ganancia y rentabilidad en euros de cada grupo con posiciones en
+    cartera, con los mismos criterios que total() (lo que no tiene precio o tipo de cambio va en
+    "excluidos"). Cada fila lleva además "grupo". Ordenado por nombre; sin los grupos vacíos."""
+    filas = []
+    for g in grupos.listar(conn):
+        if not resumen(conn, grupo_id=g["id"]):
+            continue
+        filas.append({"grupo": g["nombre"], **total(conn, vivos, g["id"])})
+    return filas
 
 
 AGRUPACIONES = ("instrumento", "tipo", "divisa", "grupo")

@@ -49,8 +49,8 @@ importacion.importar_csv(
 
 path_Laura = r"C:\finance_tracking\import_data\Plusvalías y minusvalías fondo IE00BYX5NX33 Laura.csv"
 importacion.importar_csv(
-    nombre="iShares Developed World Index Fund (IE) Class S",
-    isin="IE000ZYRH0Q7",
+    nombre="Fidelity MSCI World Index Fund P-ACC-EUR",
+    isin="IE00BYX5NX33",
     divisa="EUR",
     ruta=path_Laura,grupo="Inversiones Laura"
 )

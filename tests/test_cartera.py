@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from finanzas import cartera, compras, db, instrumentos
+from finanzas import cartera, compras, db, grupos, instrumentos
 
 
 @pytest.fixture
@@ -82,3 +82,28 @@ def test_reparto_excluye_y_valida(conn):
     assert r == {"valor": None, "filas": [], "excluidos": [("SinPrecio", "sin precio")]}
     with pytest.raises(ValueError):
         cartera.reparto(conn, "otra")
+
+
+def test_por_grupo(conn):
+    from finanzas import precios
+
+    fondo = instrumentos.anadir(conn, "Bitcoin", "cripto", "EUR")
+    precios.anadir(conn, fondo, date(2026, 11, 20), "15")
+    laura = grupos.anadir(conn, "Laura")
+    grupos.anadir(conn, "Vacio")
+    compras.anadir(conn, fondo, date(2026, 1, 1), "2", "10")  # Personal: invierte 20, vale 30
+    compras.anadir(conn, fondo, date(2026, 1, 1), "4", "10", grupo_id=laura)  # 40 -> 60
+    r = cartera.por_grupo(conn)
+    assert [(f["grupo"], f["invertido"], f["valor"], f["ganancia"]) for f in r] == [
+        ("Laura", Decimal("40"), Decimal("60"), Decimal("20")),
+        ("Personal", Decimal("20"), Decimal("30"), Decimal("10")),
+    ]
+    assert [f["rentabilidad"] for f in r] == [Decimal("0.5"), Decimal("0.5")]
+    assert cartera.total(conn)["valor"] == Decimal("90")
+
+
+def test_por_grupo_sin_precio(conn):
+    id_ = instrumentos.anadir(conn, "SinPrecio", "cripto", "EUR")
+    compras.anadir(conn, id_, date(2026, 1, 1), "1", "10")
+    [f] = cartera.por_grupo(conn)
+    assert f["valor"] is None and f["excluidos"] == [("SinPrecio", "sin precio")]

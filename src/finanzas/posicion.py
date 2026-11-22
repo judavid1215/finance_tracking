@@ -21,6 +21,34 @@ ORDER BY fecha, orden, id
 """
 
 
+def historial(
+    conn: sqlite3.Connection, instrumento_id: int, grupo_id: int | None = None
+) -> list[tuple[str, Decimal, Decimal]]:
+    """Posición tras cada operación: [(fecha AAAA-MM-DD, participaciones, invertido), ...] en
+    el orden en que se aplican. Con grupo_id solo cuentan las operaciones de ese grupo.
+
+    Lanza ValueError si en algún momento se vende más de lo que había.
+    """
+    participaciones = Decimal(0)
+    invertido = Decimal(0)
+    pasos = []
+    for m in conn.execute(_MOVIMIENTOS, {"id": instrumento_id, "grupo": grupo_id}):
+        n = Decimal(m["participaciones"])
+        if m["tipo"] == "compra":
+            participaciones += n
+            invertido += n * Decimal(m["precio"]) + Decimal(m["comision"])
+        else:
+            if n > participaciones:
+                raise ValueError(
+                    f"venta {m['id']} ({m['fecha']}): "
+                    f"solo hay {participaciones} participaciones hasta esa fecha"
+                )
+            invertido = invertido * (participaciones - n) / participaciones
+            participaciones -= n
+        pasos.append((m["fecha"], participaciones, invertido))
+    return pasos
+
+
 def calcular(conn: sqlite3.Connection, instrumento_id: int, grupo_id: int | None = None) -> dict:
     """Devuelve {"participaciones": ..., "invertido": ...} tras todas las operaciones.
 
@@ -29,19 +57,7 @@ def calcular(conn: sqlite3.Connection, instrumento_id: int, grupo_id: int | None
 
     Lanza ValueError si en algún momento se vende más de lo que había.
     """
-    participaciones = Decimal(0)
-    invertido = Decimal(0)
-    for m in conn.execute(_MOVIMIENTOS, {"id": instrumento_id, "grupo": grupo_id}):
-        n = Decimal(m["participaciones"])
-        if m["tipo"] == "compra":
-            participaciones += n
-            invertido += n * Decimal(m["precio"]) + Decimal(m["comision"])
-            continue
-        if n > participaciones:
-            raise ValueError(
-                f"venta {m['id']} ({m['fecha']}): "
-                f"solo hay {participaciones} participaciones hasta esa fecha"
-            )
-        invertido = invertido * (participaciones - n) / participaciones
-        participaciones -= n
-    return {"participaciones": participaciones, "invertido": invertido}
+    pasos = historial(conn, instrumento_id, grupo_id)
+    if not pasos:
+        return {"participaciones": Decimal(0), "invertido": Decimal(0)}
+    return {"participaciones": pasos[-1][1], "invertido": pasos[-1][2]}
