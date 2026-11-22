@@ -16,6 +16,7 @@ from finanzas import (  # noqa: E402
     precios,
     quefondos,
     ventas,
+    importacion,
 )
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
@@ -42,6 +43,7 @@ MENU = """
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
 14) Consultar precios de ahora (fondos, ETF, acciones, planes); no se guardan en el histórico
+18) Poner/quitar ticker de Yahoo (ej. 0P00009PQ4.F a un fondo; se usa en lugar del ISIN)
 17) Descargar histórico diario de precios y tipos de cambio desde la primera compra (Yahoo)
 --- ---
 0) Salir
@@ -53,6 +55,8 @@ def mostrar_instrumentos(filas):
         print("(vacío)")
     for f in filas:
         ident = f"{f['id_tipo']} {f['identificador']}" if f["identificador"] else "-"
+        if f["ticker_yahoo"]:
+            ident += f" (Yahoo: {f['ticker_yahoo']})"
         print(f"{f['id']:>3} | {f['nombre']:<25} | {f['tipo']:<15} | {f['divisa']} | {ident}")
 
 
@@ -205,6 +209,16 @@ def poner_identificador(conn):
     print("Guardado")
 
 
+def poner_ticker_yahoo(conn):
+    mostrar_instrumentos(instrumentos.listar(conn))
+    instrumento_id = pedir_entero("Id del instrumento: ")
+    if instrumento_id is None:
+        return
+    ticker = input("Ticker de Yahoo (vacío = quitar): ")
+    instrumentos.asignar_ticker_yahoo(conn, instrumento_id, ticker)
+    print("Guardado")
+
+
 def consultar_todos(conn, vivos):
     res = actualizacion.consultar_todos(conn)
     vivos.clear()
@@ -292,6 +306,7 @@ def main():
         "15": lambda: poner_identificador(conn),
         "16": lambda: reparto_cartera(conn, vivos),
         "17": lambda: descargar_historicos(conn),
+        "18": lambda: poner_ticker_yahoo(conn),
     }
     while True:
         print(MENU)
@@ -310,5 +325,5 @@ def main():
     conn.close()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     main()

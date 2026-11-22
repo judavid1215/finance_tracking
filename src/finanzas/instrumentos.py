@@ -27,12 +27,18 @@ def normalizar_tipo(tipo: str) -> str:
 
 
 def anadir(
-    conn: sqlite3.Connection, nombre: str, tipo: str, divisa: str, identificador: str | None = None
+    conn: sqlite3.Connection,
+    nombre: str,
+    tipo: str,
+    divisa: str,
+    identificador: str | None = None,
+    ticker_yahoo: str | None = None,
 ) -> int:
     """Inserta un instrumento con su identificador y devuelve su id.
 
     Fondo y ETF exigen ISIN, Plan_pensiones exige DGS y Accion exige TICKER; Cripto admite
-    un TICKER opcional (para el precio automático).
+    un TICKER opcional (para el precio automático). `ticker_yahoo` (opcional) es el símbolo con
+    el que se buscan precios e histórico en Yahoo en lugar del identificador.
     Lanza ValueError si falta el identificador, o si el nombre o el identificador ya existen,
     y sqlite3.IntegrityError si el tipo o la divisa no son válidos.
     Todo se guarda junto o no se guarda nada.
@@ -45,8 +51,8 @@ def anadir(
         raise ValueError(f"Un instrumento de tipo {tipo} necesita {tipo_id}")
     try:
         cur = conn.execute(
-            "INSERT INTO instrumentos (nombre, tipo, divisa) VALUES (?, ?, ?)",
-            (nombre, tipo, divisa),
+            "INSERT INTO instrumentos (nombre, tipo, divisa, ticker_yahoo) VALUES (?, ?, ?, ?)",
+            (nombre, tipo, divisa, (ticker_yahoo or "").strip().upper() or None),
         )
         if tipo_id and valor:
             conn.execute(
@@ -86,6 +92,20 @@ def asignar_identificador(conn: sqlite3.Connection, id: int, valor: str) -> None
     except sqlite3.IntegrityError:
         conn.rollback()
         raise ValueError(f"Ya existe un instrumento con {tipo_id} {valor}") from None
+    conn.commit()
+
+
+def asignar_ticker_yahoo(conn: sqlite3.Connection, id: int, ticker: str | None) -> None:
+    """Pone o cambia el ticker de Yahoo de un instrumento (vacío o None lo quita).
+
+    Lanza ValueError si el instrumento no existe.
+    """
+    if obtener(conn, id) is None:
+        raise ValueError("No existe ese instrumento")
+    conn.execute(
+        "UPDATE instrumentos SET ticker_yahoo = ? WHERE id = ?",
+        ((ticker or "").strip().upper() or None, id),
+    )
     conn.commit()
 
 

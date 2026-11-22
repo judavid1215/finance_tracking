@@ -211,3 +211,26 @@ def test_compra_antigua_nueva_vuelve_a_bajar_todo(conn, monkeypatch):
     precios.anadir(conn, id_, date(2026, 3, 1), "10")  # lo guardado empieza mucho después
     yahoo.descargar_historico(conn, id_, date(2026, 12, 1))
     assert FakeFiltrado.llamadas == ["2026-01-02"]
+
+
+def test_con_ticker_yahoo_se_busca_por_el_ticker_y_no_por_el_isin(conn, monkeypatch):
+    pedidos = []
+
+    def ticker(simbolo):
+        pedidos.append(simbolo)
+        return FakeHistorico(simbolo)
+
+    monkeypatch.setattr(yahoo.yf, "Ticker", ticker)
+    id_ = instrumentos.anadir(conn, "DNB", "Fondo", "EUR", "LU0302296495", "0P00009PQ4.F")
+    compras.anadir(conn, id_, date(2026, 1, 2), "1", "10")
+    yahoo.descargar_historico(conn, id_)
+    yahoo.consultar(conn, id_)
+    assert pedidos and set(pedidos) == {"0P00009PQ4.F"}
+
+
+def test_sin_ticker_yahoo_se_busca_por_el_identificador(conn, monkeypatch):
+    pedidos = []
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: pedidos.append(s) or FakeTicker(s))
+    id_ = instrumentos.anadir(conn, "DNB", "Fondo", "EUR", "LU0302296495")
+    yahoo.consultar(conn, id_)
+    assert pedidos == ["LU0302296495"]

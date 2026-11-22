@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS instrumentos (
     id      INTEGER PRIMARY KEY,
     nombre  TEXT NOT NULL UNIQUE COLLATE NOCASE,  -- sin repetidos (ignora mayúsculas)
     tipo    TEXT NOT NULL CHECK (tipo IN ('Fondo','ETF','Accion','Cripto','Plan_pensiones')),
-    divisa  TEXT NOT NULL CHECK (length(divisa) = 3)
+    divisa  TEXT NOT NULL CHECK (length(divisa) = 3),
+    -- Símbolo de Yahoo para precios e histórico, si no es el identificador (ej. 0P00009PQ4.F).
+    ticker_yahoo TEXT CHECK (ticker_yahoo IS NULL OR length(ticker_yahoo) > 0)
     -- Más adelante: grupo_id INTEGER (nullable) para agrupar instrumentos.
 );
 
@@ -110,8 +112,20 @@ def conectar(ruta: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_TABLAS)
     _anadir_comision_si_falta(conn)
+    _anadir_ticker_yahoo_si_falta(conn)
     conn.executescript(_VISTAS)
     return conn
+
+
+def _anadir_ticker_yahoo_si_falta(conn: sqlite3.Connection) -> None:
+    """Bases creadas antes de existir ticker_yahoo: añade la columna (las filas viejas, sin él)."""
+    columnas = [c["name"] for c in conn.execute("PRAGMA table_info(instrumentos)")]
+    if "ticker_yahoo" not in columnas:
+        conn.execute(
+            "ALTER TABLE instrumentos ADD COLUMN ticker_yahoo TEXT "
+            "CHECK (ticker_yahoo IS NULL OR length(ticker_yahoo) > 0)"
+        )
+        conn.commit()
 
 
 def _anadir_comision_si_falta(conn: sqlite3.Connection) -> None:

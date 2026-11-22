@@ -24,7 +24,30 @@ Qué hay (en `src/finanzas/`):
 
 Para probar a mano: `python main.py` (menú de consola).
 
+## Importar desde CSV (MyInvestor)
+
+`finanzas.importacion.importar_csv(nombre, isin, divisa, ruta, ruta_db=...)`
+importa un CSV "Plusvalías y minusvalías" de MyInvestor como un fondo (uno por llamada). Lanza `ValueError` si algo falla. Cada fila es un lote que sigue en cartera (solo posiciones abiertas, sin ventas). El CSV no trae
+participaciones ni precios, así que se calculan:
+
+- participaciones = valor de mercado / NAV con el que MyInvestor valoró. Ese NAV es uno de los 5
+  últimos cierres de Yahoo anteriores a la fecha de modificación del fichero; se elige el que
+  hace encajar mejor el precio de compra implícito con el histórico de Yahoo.
+- precio de compra = inversión / participaciones, comisión 0.
+- excepción: un lote que difiere más de un 10 % del precio de Yahoo (p. ej. un traspaso entre
+  fondos) usa el cierre de Yahoo de su fecha fiscal: participaciones = inversión / precio.
+
+Todo o nada: un error en cualquier fila cancela la importación y se listan todos. Un
+fondo que ya tiene compras se rechaza. Si Yahoo no tiene histórico del fondo se usa el último cierre y se marca
+"SIN VALIDAR".
+
+
 ## De dónde salen los precios
+
+Cada instrumento puede tener un **ticker de Yahoo** (opción 18 del menú, o `ticker_yahoo` al
+importar) que se usa en lugar del ISIN o ticker para buscar el precio actual y el histórico
+(opciones 14 y 17). Sirve cuando Yahoo no tiene datos con el ISIN, p. ej. `0P00009PQ4.F` para un
+fondo. El identificador (ISIN) no cambia.
 
 Ninguna fuente es una API oficial; el precio se puede poner a mano (opción 9) o descargar
 (opciones 13, 14 y 17 del menú).

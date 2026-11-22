@@ -14,6 +14,12 @@ from finanzas import instrumentos, precios
 TIPOS_ID = ("ISIN", "TICKER")
 
 
+def simbolo(inst: sqlite3.Row) -> str:
+    """Símbolo con el que se busca el instrumento en Yahoo: su ticker_yahoo o, si no tiene,
+    su identificador (ISIN o ticker)."""
+    return inst["ticker_yahoo"] or inst["identificador"]
+
+
 def leer_precio(simbolo: str) -> tuple[date, Decimal, str]:
     """Devuelve (fecha, último cierre, divisa) del ISIN o ticker dado.
 
@@ -39,10 +45,10 @@ def consultar(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, Deci
     inst = instrumentos.obtener(conn, instrumento_id)
     if inst is None or inst["id_tipo"] not in TIPOS_ID:
         raise ValueError("Solo se actualiza un fondo, ETF, acción o cripto con identificador")
-    fecha, precio, divisa = leer_precio(inst["identificador"])
+    fecha, precio, divisa = leer_precio(simbolo(inst))
     if divisa != inst["divisa"]:
         raise ValueError(
-            f"Yahoo da {inst['identificador']} en {divisa}, pero el instrumento está en "
+            f"Yahoo da {simbolo(inst)} en {divisa}, pero el instrumento está en "
             f"{inst['divisa']}; no se guarda"
         )
     return fecha, precio
@@ -104,15 +110,15 @@ def descargar_historico(
     desde = precios.desde_descarga(date.fromisoformat(fila["primera"]), guardado)
     if desde >= hoy:
         return None, None, 0
-    filas, divisa = leer_historico(inst["identificador"], desde, permitir_vacio=bool(guardado))
+    filas, divisa = leer_historico(simbolo(inst), desde, permitir_vacio=bool(guardado))
     filas = [(f, p) for f, p in filas if f < hoy]
     if not filas:
         if guardado:
             return None, None, 0
-        raise ValueError(f"Yahoo no tiene histórico para {inst['identificador']} hasta ayer")
+        raise ValueError(f"Yahoo no tiene histórico para {simbolo(inst)} hasta ayer")
     if divisa != inst["divisa"]:
         raise ValueError(
-            f"Yahoo da {inst['identificador']} en {divisa}, pero el instrumento está en "
+            f"Yahoo da {simbolo(inst)} en {divisa}, pero el instrumento está en "
             f"{inst['divisa']}; no se guarda"
         )
     precios.anadir_muchos(conn, instrumento_id, filas)

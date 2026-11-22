@@ -67,3 +67,15 @@ def test_persiste_entre_conexiones(tmp_path):
     c2 = db.conectar(ruta)
     assert len(instrumentos.listar(c2)) == 1
     c2.close()
+
+
+def test_ticker_yahoo_al_anadir_y_al_cambiarlo(conn):
+    id_ = instrumentos.anadir(conn, "DNB", "Fondo", "EUR", "LU0302296495", " 0p00009pq4.f ")
+    assert instrumentos.obtener(conn, id_)["ticker_yahoo"] == "0P00009PQ4.F"
+    instrumentos.asignar_ticker_yahoo(conn, id_, "OTRO.F")
+    assert instrumentos.obtener(conn, id_)["ticker_yahoo"] == "OTRO.F"
+    instrumentos.asignar_ticker_yahoo(conn, id_, "  ")  # vacío = quitarlo
+    assert instrumentos.obtener(conn, id_)["ticker_yahoo"] is None
+    assert instrumentos.obtener(conn, id_)["identificador"] == "LU0302296495"
+    with pytest.raises(ValueError):
+        instrumentos.asignar_ticker_yahoo(conn, 999, "X")
