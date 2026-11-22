@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "finanzas"
 
-from finanzas import compras, db, instrumentos  # noqa: E402
+from finanzas import cartera, compras, db, instrumentos  # noqa: E402
 
 # Siempre en <proyecto>/data/, se ejecute desde donde se ejecute.
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
@@ -22,6 +22,8 @@ MENU = """
 5) Añadir compra
 6) Listar compras (todas o de un instrumento)
 7) Borrar compra por id
+--- Cartera ---
+8) Resumen por instrumento
 --- ---
 0) Salir
 """
@@ -42,6 +44,16 @@ def mostrar_compras(lista):
         print(
             f"{c['id']:>3} | {c['instrumento']:<20} | {c['fecha']:%d-%m-%Y} | "
             f"{c['participaciones']} part. x {c['precio']}"
+        )
+
+
+def mostrar_cartera(filas):
+    if not filas:
+        print("(vacío)")
+    for f in filas:
+        print(
+            f"{f['instrumento']:<20} | {f['participaciones']} part. | "
+            f"invertido {f['invertido']:.2f} | precio medio {f['precio_medio']:.4f}"
         )
 
 
@@ -99,6 +111,7 @@ def main():
         "5": lambda: anadir_compra(conn),
         "6": lambda: listar_compras(conn),
         "7": lambda: borrar_con_id(conn, compras),
+        "8": lambda: mostrar_cartera(cartera.resumen(conn)),
     }
     while True:
         print(MENU)
