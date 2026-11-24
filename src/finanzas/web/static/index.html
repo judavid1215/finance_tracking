@@ -8,12 +8,19 @@
 </head>
 <body>
   <header>
-    <select id="grupo" aria-label="Grupo"></select>
-    <select id="instrumento" aria-label="Instrumento"></select>
+    <div class="pestanas" role="tablist" aria-label="Sección">
+      <button role="tab" data-seccion="evolucion" aria-selected="true">Evolución</button>
+      <button role="tab" data-seccion="operaciones" aria-selected="false">Operaciones</button>
+    </div>
     <button id="tema" type="button"></button>
   </header>
 
-  <main>
+  <main id="s-evolucion">
+    <div class="filtros">
+      <select id="grupo" aria-label="Grupo"></select>
+      <select id="instrumento" aria-label="Instrumento"></select>
+    </div>
+
     <section class="tarjetas" aria-live="polite">
       <div class="tarjeta"><span class="etiqueta">Valor</span><strong id="t-valor">–</strong></div>
       <div class="tarjeta"><span class="etiqueta">Ganancia</span><strong id="t-ganancia">–</strong></div>
@@ -34,9 +41,137 @@
     </div>
   </main>
 
+  <!-- ===== Operaciones: SOLO DISEÑO, datos de ejemplo, sin conectar ===== -->
+  <main id="s-operaciones" hidden>
+    <p class="aviso-diseno">Maqueta: datos de ejemplo, aún sin conectar.</p>
+    <div id="migas" class="migas" role="navigation" aria-label="Ubicación"></div>
+    <div id="acciones-ops" class="acciones"></div>
+
+    <div id="barra-seleccion" class="barra-seleccion" hidden>
+      <span id="n-seleccion"></span>
+      <button class="peligro" data-abrir="d-borrar" type="button">Borrar</button>
+    </div>
+
+    <ul id="lista-ops" class="lista-ops"></ul>
+  </main>
+
+  <!-- ===== Diálogos ===== -->
+  <dialog id="d-anadir">
+    <form method="dialog" class="modal">
+      <h2>Añadir operación</h2>
+      <p class="contexto" id="ctx-anadir"></p>
+      <div class="segmentado" role="group" aria-label="Tipo">
+        <label><input type="radio" name="tipo-op" checked> Compra</label>
+        <label><input type="radio" name="tipo-op"> Venta</label>
+      </div>
+      <label class="campo">Fecha <input type="date"></label>
+      <div class="fila">
+        <label class="campo">Participaciones <input type="text" inputmode="decimal"></label>
+        <label class="campo">Precio <input type="text" inputmode="decimal"></label>
+      </div>
+      <label class="campo">Comisión <input type="text" inputmode="decimal" value="0"></label>
+      <p class="nota" id="nota-venta" hidden></p>
+      <div class="pie">
+        <button value="cancelar">Cancelar</button>
+        <button class="primario" value="ok">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="d-instrumento">
+    <form method="dialog" class="modal">
+      <h2>Nuevo instrumento</h2>
+      <p class="contexto" id="ctx-instrumento"></p>
+      <label class="campo">Nombre <input type="text"></label>
+      <div class="fila">
+        <label class="campo">Tipo
+          <select><option>Fondo</option><option>ETF</option><option>Acción</option><option>Cripto</option><option>Plan de pensiones</option></select>
+        </label>
+        <label class="campo">Divisa <input type="text" value="EUR" maxlength="3"></label>
+      </div>
+      <div class="fila">
+        <label class="campo">ISIN <input type="text"></label>
+        <label class="campo">Ticker Yahoo <input type="text" placeholder="opcional"></label>
+      </div>
+      <p class="nota">Si el ISIN ya existe, se reutiliza ese instrumento.</p>
+      <div class="pie">
+        <button value="cancelar">Cancelar</button>
+        <button class="primario" value="ok">Crear</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="d-borrar">
+    <form method="dialog" class="modal">
+      <h2>Borrar operaciones</h2>
+      <p>Se borrarán de forma permanente:</p>
+      <ul class="resumen" id="lista-borrar"></ul>
+      <p class="nota">Esta acción no se puede deshacer.</p>
+      <div class="pie">
+        <button value="cancelar">Cancelar</button>
+        <button class="peligro-lleno" value="ok">Borrar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="d-mover">
+    <form method="dialog" class="modal">
+      <h2>Mover a otro grupo</h2>
+      <p class="contexto" id="ctx-mover"></p>
+      <label class="campo">Mover a <select id="destino-mover"></select></label>
+      <p class="nota" id="nota-mover"></p>
+      <div class="pie">
+        <button value="cancelar">Cancelar</button>
+        <button class="primario" value="ok">Mover</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="d-csv">
+    <form method="dialog" class="modal" id="asistente">
+      <h2>Importar CSV de MyInvestor</h2>
+      <p class="contexto" id="ctx-csv"></p>
+      <ol class="pasos" aria-label="Pasos">
+        <li class="activo">Fichero</li><li>Vista previa</li><li>Confirmar</li>
+      </ol>
+
+      <section data-paso="1">
+        <div class="zona-archivo">Arrastra aquí el CSV de órdenes<br><span class="nota">o</span><br><button type="button">Elegir fichero</button></div>
+        <p class="nota">El ISIN se lee del fichero.</p>
+      </section>
+
+      <section data-paso="2" hidden>
+        <p><strong>IE00BYX5NX33</strong> · Fidelity MSCI World Index Fund (ya existe)</p>
+        <div class="contadores">
+          <span class="etq compra">14 válidas</span>
+          <span class="etq neutra">2 ignoradas</span>
+          <span class="etq venta">0 errores</span>
+        </div>
+        <ul class="resumen">
+          <li>14 oct 2025 · 0,65 part. a 153,94 €</li>
+          <li>14 nov 2025 · 0,66 part. a 151,52 €</li>
+          <li>14 dic 2025 · 0,64 part. a 156,25 €</li>
+          <li class="nota">… 11 más</li>
+        </ul>
+      </section>
+
+      <section data-paso="3" hidden>
+        <p id="resumen-csv"></p>
+        <p class="nota">Las 2 órdenes “En curso” o “Rechazada” se ignoran.</p>
+      </section>
+
+      <div class="pie">
+        <button value="cancelar" id="csv-cancelar">Cancelar</button>
+        <button type="button" id="csv-atras" hidden>Atrás</button>
+        <button type="button" class="primario" id="csv-sig">Siguiente</button>
+      </div>
+    </form>
+  </dialog>
+
   <nav id="periodos" aria-label="Periodo"></nav>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/operaciones.js"></script>
 </body>
 </html>
