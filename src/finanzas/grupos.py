@@ -46,6 +46,40 @@ def por_defecto(conn: sqlite3.Connection) -> int:
     return obtener_o_crear(conn, GRUPO_POR_DEFECTO)[0]
 
 
+def mover_instrumento(
+    conn: sqlite3.Connection, instrumento_id: int, origen_id: int, destino_id: int
+) -> int:
+    """Pasa todas las compras y ventas de un instrumento del grupo `origen` al grupo `destino`.
+
+    Devuelve cuántas operaciones se movieron. ValueError (y no cambia nada) si el destino no
+    existe, si es el mismo grupo, si no hay operaciones que mover o si el destino ya tiene
+    operaciones de ese instrumento.
+    """
+    if origen_id == destino_id:
+        raise ValueError("El grupo de origen y el de destino son el mismo")
+    if conn.execute("SELECT 1 FROM grupos WHERE id = ?", (destino_id,)).fetchone() is None:
+        raise ValueError("No existe el grupo de destino")
+    en_grupo = (
+        "SELECT COUNT(*) FROM {t} WHERE instrumento_id = :i AND grupo_id = :g"
+    )
+    cuenta = lambda g: sum(  # noqa: E731
+        conn.execute(en_grupo.format(t=t), {"i": instrumento_id, "g": g}).fetchone()[0]
+        for t in ("compras", "ventas")
+    )
+    if cuenta(destino_id):
+        raise ValueError("El grupo de destino ya tiene operaciones de este instrumento")
+    movidas = cuenta(origen_id)
+    if not movidas:
+        raise ValueError("El instrumento no tiene operaciones en el grupo de origen")
+    for tabla in ("compras", "ventas"):
+        conn.execute(
+            f"UPDATE {tabla} SET grupo_id = ? WHERE instrumento_id = ? AND grupo_id = ?",
+            (destino_id, instrumento_id, origen_id),
+        )
+    conn.commit()
+    return movidas
+
+
 def borrar(conn: sqlite3.Connection, id: int) -> bool:
     """Borra un grupo por id. Devuelve True si existía.
 

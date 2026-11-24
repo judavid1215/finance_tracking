@@ -162,8 +162,18 @@ def pedir_grupo(conn):
 def gestionar_grupos(conn):
     for g in grupos.listar(conn):
         print(f"{g['id']:>3} | {g['nombre']}")
-    accion = input("1) crear  2) borrar  (vacío = volver): ").strip()
-    if accion == "1":
+    accion = input("1) crear  2) borrar  3) mover instrumento (vacío = volver): ").strip()
+    if accion == "3":
+        mostrar_instrumentos(instrumentos.listar(conn))
+        instrumento_id = pedir_entero("Id del instrumento: ")
+        if instrumento_id is None:
+            return
+        print("Grupo de origen")
+        origen = pedir_grupo(conn) or grupos.por_defecto(conn)
+        print("Grupo de destino")
+        destino = pedir_grupo(conn) or grupos.por_defecto(conn)
+        print(grupos.mover_instrumento(conn, instrumento_id, origen, destino), "operaciones movidas")
+    elif accion == "1":
         print("Añadido con id", grupos.anadir(conn, input("Nombre: ")))
     elif accion == "2":
         id_ = pedir_entero("Id a borrar: ")

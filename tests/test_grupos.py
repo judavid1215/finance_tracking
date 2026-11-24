@@ -111,6 +111,35 @@ def test_borrar_grupo_solo_si_no_tiene_operaciones(conn, fondo):
     assert grupos.borrar(conn, vacio) is True and grupos.borrar(conn, vacio) is False
 
 
+def test_mover_instrumento_de_grupo(conn, fondo):
+    personal = grupos.anadir(conn, "Personal")
+    pension = grupos.anadir(conn, "Pension")
+    compras.anadir(conn, fondo, date(2026, 1, 5), 10, 10, grupo_id=personal)
+    ventas.anadir(conn, fondo, date(2026, 2, 1), 4, 12, grupo_id=personal)
+    assert grupos.mover_instrumento(conn, fondo, personal, pension) == 2
+    assert posicion.calcular(conn, fondo, personal)["participaciones"] == 0
+    assert posicion.calcular(conn, fondo, pension)["participaciones"] == 6
+    assert grupos.borrar(conn, personal) is True  # ya no tiene operaciones
+
+
+def test_mover_instrumento_rechaza_casos_invalidos(conn, fondo):
+    personal = grupos.anadir(conn, "Personal")
+    pension = grupos.anadir(conn, "Pension")
+    compras.anadir(conn, fondo, date(2026, 3, 1), 5, 10, grupo_id=pension)
+    compras.anadir(conn, fondo, date(2026, 1, 5), 10, 10, grupo_id=personal)
+    with pytest.raises(ValueError, match="mismo"):
+        grupos.mover_instrumento(conn, fondo, personal, personal)
+    with pytest.raises(ValueError, match="destino"):
+        grupos.mover_instrumento(conn, fondo, personal, 999)
+    vacio = grupos.anadir(conn, "Vacio")
+    otro = grupos.anadir(conn, "Otro")
+    with pytest.raises(ValueError, match="no tiene operaciones"):
+        grupos.mover_instrumento(conn, fondo, vacio, otro)
+    with pytest.raises(ValueError, match="ya tiene operaciones"):
+        grupos.mover_instrumento(conn, fondo, personal, pension)  # el destino ya lo tiene
+    assert len(compras.listar(conn, grupo_id=personal)) == 1  # nada cambió
+
+
 def test_base_anterior_a_los_grupos_se_rechaza_con_un_mensaje_claro(tmp_path):
     import sqlite3
 
