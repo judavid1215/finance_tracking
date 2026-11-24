@@ -15,20 +15,23 @@ from finanzas import cartera, divisas, instrumentos, quefondos, yahoo
 DIAS_ANTIGUO = 5
 
 
-def _consulta(id_tipo):
+def _consulta(id_tipo, guardar=False):
     if id_tipo == "DGS":
         return quefondos.actualizar  # guarda el valor liquidativo
     if id_tipo in yahoo.TIPOS_ID:
-        return yahoo.consultar  # no guarda
+        return yahoo.actualizar if guardar else yahoo.consultar
     return None
 
 
-def consultar_todos(conn: sqlite3.Connection, hoy: date | None = None) -> dict:
+def consultar_todos(
+    conn: sqlite3.Connection, hoy: date | None = None, guardar: bool = False
+) -> dict:
     """Consulta el precio de ahora de cada instrumento con participaciones en cartera.
 
     Los instrumentos que ya no tienes (vendidos del todo o sin compras) no se tocan.
     Después consulta el tipo de cambio a euros de cada divisa distinta del euro que haya en
-    la cartera. Nada de Yahoo se guarda (ver el principio del módulo).
+    la cartera. Nada de Yahoo se guarda (ver el principio del módulo), salvo con guardar=True
+    (lo usa `refrescar`): entonces precios y tipos de cambio de ahora se guardan en el histórico.
     Devuelve {"filas": [...], "sin_posicion": n, "divisas": [...], "vivos": {...}}, donde
     "vivos" es {"precios": {instrumento_id: precio}, "tasas": {divisa: tasa}}: lo que hay que
     pasar a `cartera.resumen/total/reparto` para calcular con los valores de este momento.
@@ -48,7 +51,7 @@ def consultar_todos(conn: sqlite3.Connection, hoy: date | None = None) -> dict:
             continue
         fila = {"nombre": inst["nombre"]}
         filas.append(fila)
-        consulta = _consulta(inst["id_tipo"])
+        consulta = _consulta(inst["id_tipo"], guardar)
         if consulta is None:
             fila.update(estado="omitido", mensaje="sin identificador")
             continue
@@ -64,7 +67,7 @@ def consultar_todos(conn: sqlite3.Connection, hoy: date | None = None) -> dict:
             antiguo=(hoy - fecha).days > DIAS_ANTIGUO,
         )
         vivos["precios"][inst["id"]] = precio
-    filas_divisas = _consultar_divisas({f["divisa"] for f in resumen})
+    filas_divisas = _consultar_divisas(conn, {f["divisa"] for f in resumen}, guardar)
     vivos["tasas"] = {d["divisa"]: d["tasa"] for d in filas_divisas if d["estado"] == "ok"}
     return {
         "filas": filas,
@@ -74,11 +77,11 @@ def consultar_todos(conn: sqlite3.Connection, hoy: date | None = None) -> dict:
     }
 
 
-def _consultar_divisas(usadas):
+def _consultar_divisas(conn, usadas, guardar=False):
     filas = []
     for divisa in sorted(usadas - {divisas.BASE}):
         try:
-            fecha, tasa = divisas.leer_tasa(divisa)
+            fecha, tasa = divisas.actualizar(conn, divisa) if guardar else divisas.leer_tasa(divisa)
         except (ValueError, OSError) as e:
             filas.append({"divisa": divisa, "estado": "error", "mensaje": str(e)})
         else:
@@ -131,3 +134,15 @@ def descargar_historicos_divisas(conn: sqlite3.Connection) -> list[dict]:
         else:
             fila.update(estado="ok", desde=desde, hasta=hasta, dias=dias)
     return filas
+
+
+def refrescar(conn: sqlite3.Connection) -> dict:
+    """Deja la base al día para la web: baja el histórico que falte (hasta ayer) y guarda el
+    precio y el tipo de cambio de ahora (el día de hoy, que se sustituye en cada llamada y se
+    cierra con el histórico del día siguiente). Devuelve {"historicos", "divisas", "ahora"}
+    con los resultados de cada paso."""
+    return {
+        "historicos": descargar_historicos(conn),
+        "divisas": descargar_historicos_divisas(conn),
+        "ahora": consultar_todos(conn, guardar=True),
+    }

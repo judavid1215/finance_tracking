@@ -128,3 +128,15 @@ def test_plan_de_pensiones_si_se_guarda(conn, monkeypatch):
     consultar = actualizacion.consultar_todos(conn, HOY)
     assert consultar["vivos"]["precios"] == {plan: Decimal("30")}
     assert precios.ultimo(conn, plan) == Decimal("30")
+
+
+def test_refrescar_guarda_el_precio_de_ahora(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "Cripto", "BTC-EUR")
+    monkeypatch.setattr(yahoo, "descargar_historico", lambda c, i: (None, None, 0))
+    falso_yahoo(monkeypatch)  # yahoo.consultar / actualizar de pega
+    monkeypatch.setattr(
+        yahoo, "actualizar", lambda c, i: (precios.anadir(c, i, date(2026, 11, 22), "50") or (date(2026, 11, 22), Decimal("50")))
+    )
+    res = actualizacion.refrescar(conn)
+    assert res["ahora"]["filas"][0]["estado"] == "ok"
+    assert precios.ultimo(conn, id_) == Decimal("50")

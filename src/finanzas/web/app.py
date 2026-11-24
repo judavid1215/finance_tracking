@@ -2,6 +2,7 @@
 
 - GET /                 la página (static/index.html)
 - GET /api/opciones     grupos e instrumentos con operaciones (y en qué grupos), para los selectores
+- GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
 - GET /api/evolucion    ?periodo=1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
 
@@ -31,8 +32,9 @@ def _entero(nombre: str) -> int | None:
         abort(400, f"'{nombre}' debe ser un número")
 
 
-def crear_app(ruta_db: str | Path, hoy=date.today) -> Flask:
-    """`hoy` es una función (para poder fijar la fecha en los tests)."""
+def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> Flask:
+    """`hoy` es una función (para poder fijar la fecha en los tests). `actualizado` devuelve
+    cuándo se actualizaron los precios por última vez (texto ISO en UTC) o None si no se sabe."""
     app = Flask(__name__, static_folder="static", static_url_path="/static")
 
     def abrir():
@@ -41,6 +43,10 @@ def crear_app(ruta_db: str | Path, hoy=date.today) -> Flask:
     @app.get("/")
     def pagina():
         return app.send_static_file("index.html")
+
+    @app.get("/api/estado")
+    def estado():
+        return jsonify({"actualizado": actualizado()})
 
     @app.get("/api/opciones")
     def opciones():

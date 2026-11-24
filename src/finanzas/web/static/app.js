@@ -6,6 +6,8 @@ const estado = { periodo: "1M", vista: "valor", grupo: "todos", instrumento: "to
 const TEMAS = { auto: ["◐", "Tema: automático"], claro: ["☀", "Tema: claro"], oscuro: ["☾", "Tema: oscuro"] };
 let grafico = null;
 let ultimosDatos = null;
+let sello = null; // última actualización de precios que conoce el servidor
+const hora = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 const $ = (id) => document.getElementById(id);
 const euros = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -87,10 +89,10 @@ function pintarTarjetas(r) {
   $("rango").textContent = r && r.desde ? `${fechaLarga.format(aFecha(r.desde))} – ${fechaLarga.format(aFecha(r.hasta))}` : "";
 }
 
-function pintarGrafico() {
+// Configuración de Chart.js para los datos actuales (null si no hay nada que dibujar).
+function configuracion() {
   const r = ultimosDatos;
-  if (grafico) { grafico.destroy(); grafico = null; }
-  if (!r || !r.puntos.length) return;
+  if (!r || !r.puntos.length) return null;
 
   const etiquetas = r.puntos.map((p) => p.fecha);
   const eje = { color: css("--suave"), font: { size: 11 } };
@@ -135,7 +137,7 @@ function pintarGrafico() {
       c.dataset.label === "Compras" ? tooltipCompra(c) : `Rentabilidad: ${pct.format(c.parsed.y)}`;
   }
 
-  grafico = new Chart($("grafico"), {
+  return {
     type: "line",
     data: { labels: etiquetas, datasets },
     options: {
@@ -161,20 +163,58 @@ function pintarGrafico() {
         y: { ticks: { ...eje, maxTicksLimit: 6, callback: formatoY }, grid: { color: css("--rejilla") } },
       },
     },
-  });
+  };
 }
 
-async function cargar() {
-  const q = new URLSearchParams({ periodo: estado.periodo, grupo: estado.grupo, instrumento: estado.instrumento });
+function pintarGrafico() {
+  if (grafico) { grafico.destroy(); grafico = null; }
+  const c = configuracion();
+  if (c) grafico = new Chart($("grafico"), c);
+}
+
+// Repinta con datos nuevos sin destruir el gráfico: no hay parpadeo ni animación.
+function actualizarGrafico() {
+  const c = configuracion();
+  if (!c || !grafico) return pintarGrafico();
+  grafico.data = c.data;
+  grafico.options = c.options;
+  grafico.update("none");
+}
+
+// Aviso sutil: la hora de la última actualización de precios.
+function pintarAviso() {
+  const a = $("aviso");
+  a.hidden = !sello;
+  if (sello) a.textContent = `Precios de las ${hora.format(new Date(sello))}`;
+}
+
+// Si el servidor avisa de precios nuevos, se vuelven a pedir los datos y se repinta en silencio.
+async function consultarEstado() {
+  const anterior = sello;
   try {
-    ultimosDatos = await pedir("/api/evolucion?" + q);
-    mostrarMensaje(ultimosDatos.puntos.length ? "" : "Sin datos en este periodo");
+    sello = (await pedir("/api/estado")).actualizado;
+  } catch (e) { return; /* sin aviso si no responde */ }
+  pintarAviso();
+  if (anterior && sello !== anterior) cargar(true);
+}
+
+let peticion = 0; // para ignorar respuestas que llegan tarde (se cambió de filtro mientras tanto)
+async function cargar(enSilencio = false) {
+  const esta = ++peticion;
+  const q = new URLSearchParams({ periodo: estado.periodo, grupo: estado.grupo, instrumento: estado.instrumento });
+  let datos = null, error = null;
+  try {
+    datos = await pedir("/api/evolucion?" + q);
   } catch (e) {
-    ultimosDatos = null;
-    mostrarMensaje("No se pudo cargar: " + e.message);
+    error = e;
   }
+  if (esta !== peticion) return;
+  if (error && enSilencio) return; // en silencio, un fallo no borra lo que ya se ve
+  if (enSilencio && JSON.stringify(datos) === JSON.stringify(ultimosDatos)) return; // nada nuevo: no se redibuja
+  ultimosDatos = datos;
+  mostrarMensaje(error ? "No se pudo cargar: " + error.message : datos.puntos.length ? "" : "Sin datos en este periodo");
   pintarTarjetas(ultimosDatos);
-  pintarGrafico();
+  if (enSilencio) actualizarGrafico(); else pintarGrafico();
 }
 
 function marcarVista() {
@@ -231,7 +271,9 @@ async function iniciar() {
   // Cambiar entre tema claro y oscuro: repintar con los colores nuevos.
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pintarGrafico);
 
+  await consultarEstado();
   cargar();
+  setInterval(consultarEstado, 10000);
 }
 
 iniciar();

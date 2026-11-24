@@ -68,3 +68,12 @@ def test_sin_datos_y_errores(cliente):
     assert cliente.get("/api/evolucion?periodo=2D").status_code == 400
     assert cliente.get("/api/evolucion?grupo=abc").status_code == 400
     assert cliente.get("/api/evolucion?grupo=todos&instrumento=").status_code == 200
+
+
+def test_estado_sin_actualizaciones(cliente):
+    assert cliente.get("/api/estado").get_json() == {"actualizado": None}
+
+
+def test_estado_con_hora(tmp_path):
+    app = crear_app(tmp_path / "t.sqlite3", actualizado=lambda: "2026-01-10T14:32:00+00:00")
+    assert app.test_client().get("/api/estado").get_json() == {"actualizado": "2026-01-10T14:32:00+00:00"}
