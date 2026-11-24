@@ -1,45 +1,32 @@
-"""Importa a la base las posiciones abiertas de los CSV "Plusvalías y minusvalías" de MyInvestor.
+"""Importa a la base las órdenes de compra de los CSV "Órdenes" de MyInvestor.
 
 Uso:
     from finanzas.importacion import importar_csv
-    importar_csv("Fidelity MSCI World", "IE00BYX5NX33", "EUR", r"C:
-utaichero.csv")
+    importar_csv("Fidelity MSCI World", "IE00BYX5NX33", "EUR", r"C:\ruta\fichero.csv")
 Un fondo por llamada.
 
-Cada fila del CSV es un lote que sigue en cartera: Fecha fiscal (la compra), Inversión, Valor de
-mercado y Resultado fiscal. El CSV no trae participaciones ni precios, así que se calculan:
-
-- participaciones = valor de mercado / valor liquidativo (NAV) con el que MyInvestor valoró.
-  Ese NAV es de un día cercano a la fecha de modificación del fichero; se prueban los últimos
-  cierres de Yahoo y se elige el que hace que el precio de compra implícito encaje mejor con el
-  histórico de Yahoo en la fecha de cada lote.
-- precio de compra = inversión / participaciones (comisión 0: la inversión ya la incluye).
-- excepción: un lote cuyo precio de compra implícito difiere más de un 10 % del de Yahoo (p. ej.
-  un traspaso entre fondos) se calcula con el cierre de Yahoo de su fecha fiscal:
-  participaciones = inversión / precio.
+Columnas del CSV: Fecha de la orden; ISIN; Importe estimado ("105 EUR"); Nº de participaciones
+(coma decimal); Estado. Cada orden "Finalizada" es una compra: fecha, participaciones y
+precio = importe / participaciones (comisión 0). Las órdenes "En curso" y "Rechazada" se
+ignoran (no hay participaciones asignadas) y se cuentan en el resumen.
 
 Todo o nada: si falla cualquier fila no se escribe nada y se listan todos los errores.
-Si el fondo ya tiene compras, se rechaza (para reimportarlo hay que borrarlas antes). Si ya
-existe el instrumento con ese ISIN y sin compras, se reutiliza.
+Si el fondo ya tiene compras en el grupo, se rechaza (para reimportarlo hay que borrarlas
+antes). Si ya existe el instrumento con ese ISIN y sin compras, se reutiliza.
 """
 
 import csv
 import re
-import statistics
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-from finanzas import compras, db, grupos, instrumentos, yahoo
+from finanzas import compras, db, grupos, instrumentos
 
 RUTA_DB = Path(__file__).resolve().parents[2] / "data" / "finanzas.sqlite3"
 
-CABECERA = ["Fecha fiscal", "Inversión", "Valor de mercado", "Resultado fiscal"]
-
-CANDIDATOS = 5  # cuántos de los últimos cierres se prueban como NAV de la exportación
-VENTANA = 4  # días a cada lado de la fecha fiscal en los que se busca el precio de compra
-TOL_YAHOO = Decimal("0.10")  # un lote con más error se calcula con el precio de Yahoo (traspasos)
-TOL_MEDIANA = Decimal("0.015")  # error mediano máximo entre precio implícito y el de Yahoo
+CABECERA = ["Fecha de la orden", "ISIN", "Importe estimado", "Nº de participaciones", "Estado"]
+IGNORADOS = {"En curso", "Rechazada"}  # órdenes sin participaciones asignadas
 DECIMALES = Decimal("0.000001")  # participaciones y precio: 6 decimales (el máximo es 8)
 
 
@@ -55,86 +42,63 @@ def normalizar_isin(isin: str) -> str:
 
 
 def _numero(texto: str) -> Decimal:
-    if "." in texto:
-        raise ValueError(f"número con punto: {texto!r} (se espera coma decimal)")
+    """Número con coma o punto decimal, sin separador de miles ("22,41", "4826.56")."""
     try:
         return Decimal(texto.strip().replace(",", "."))
     except InvalidOperation:
         raise ValueError(f"número no válido: {texto!r}") from None
 
 
-def leer_csv(ruta: Path) -> list[dict]:
-    """Lee los lotes del CSV (separador ';', coma decimal, fechas dd/mm/aaaa).
+def _importe(texto: str) -> tuple[Decimal, str]:
+    """Separa "105 EUR" en (105, "EUR")."""
+    partes = texto.split()
+    if len(partes) != 2 or not re.fullmatch(r"[A-Za-z]{3}", partes[1]):
+        raise ValueError(f"importe no válido: {texto!r} (se espera algo como '105 EUR')")
+    return _numero(partes[0]), partes[1].upper()
 
+
+def leer_csv(ruta: Path) -> tuple[list[dict], int]:
+    """Lee las órdenes del CSV (separador ';', fechas dd/mm/aaaa).
+
+    Devuelve (órdenes, ignoradas): las órdenes Finalizadas y cuántas se han saltado.
     Lanza ValueError con todos los problemas encontrados, uno por línea.
     """
     with open(ruta, encoding="utf-8-sig", newline="") as f:
         filas = [fila for fila in csv.reader(f, delimiter=";") if fila]
     if not filas or [c.strip() for c in filas[0]] != CABECERA:
         raise ValueError(f"la cabecera debe ser: {';'.join(CABECERA)}")
-    lotes, errores = [], []
+    ordenes, errores, ignoradas = [], [], 0
     for n, fila in enumerate(filas[1:], start=2):
         try:
-            if len(fila) != 4:
-                raise ValueError("debe tener 4 columnas")
+            if len(fila) != 5:
+                raise ValueError("debe tener 5 columnas")
+            estado = fila[4].strip()
+            if estado in IGNORADOS:
+                ignoradas += 1
+                continue
+            if estado != "Finalizada":
+                raise ValueError(f"estado desconocido: {estado!r}")
             fecha = datetime.strptime(fila[0].strip(), "%d/%m/%Y").date()
-            inversion, valor, resultado = (_numero(c) for c in fila[1:])
-            if inversion <= 0 or valor <= 0:
-                raise ValueError("inversión y valor de mercado deben ser mayores que 0")
-            if abs(valor - inversion - resultado) > Decimal("0.01"):
-                raise ValueError("valor - inversión no coincide con el resultado fiscal")
-            lotes.append(
-                {"fecha": fecha, "inversion": inversion, "valor": valor, "resultado": resultado}
+            importe, divisa = _importe(fila[2])
+            participaciones = _numero(fila[3])
+            if importe <= 0 or participaciones <= 0:
+                raise ValueError("importe y participaciones deben ser mayores que 0")
+            ordenes.append(
+                {
+                    "fecha": fecha,
+                    "isin": fila[1].strip().upper(),
+                    "importe": importe,
+                    "divisa": divisa,
+                    "participaciones": participaciones,
+                }
             )
         except ValueError as e:
             errores.append(f"línea {n}: {e}")
     if errores:
         raise ValueError("\n".join(errores))
-    if not lotes:
-        raise ValueError("no tiene ningún lote")
-    return lotes
-
-
-def _error_lote(lote: dict, nav: Decimal, historico: list) -> Decimal | None:
-    """Diferencia relativa entre el precio de compra implícito y el más cercano de Yahoo.
-
-    None si Yahoo no tiene ningún precio cerca de la fecha del lote (no se puede comprobar).
-    """
-    implicito = lote["inversion"] * nav / lote["valor"]
-    cercanos = [p for f, p in historico if abs((f - lote["fecha"]).days) <= VENTANA]
-    return min(abs(implicito / p - 1) for p in cercanos) if cercanos else None
-
-
-def elegir_nav(
-    lotes: list[dict], historico: list, fecha_export: date
-) -> tuple[date, Decimal, Decimal | None]:
-    """Devuelve (fecha, NAV, error mediano) del cierre que mejor explica los lotes.
-
-    Se prueban los últimos cierres anteriores a la exportación (el de ese mismo día aún no
-    está publicado). Con empate gana el más reciente. Lanza ValueError si ninguno encaja.
-    Si Yahoo no tiene histórico cerca de ningún lote no se puede validar: se usa el último
-    cierre y el error mediano sale None (el script lo avisa).
-    """
-    cierres = [(f, p) for f, p in historico if f < fecha_export][-CANDIDATOS:]
-    if not cierres:
-        raise ValueError("Yahoo no tiene cierres anteriores a la fecha de exportación")
-    mejor = None
-    for fecha, nav in reversed(cierres):
-        errores = [
-            e for e in (_error_lote(lote, nav, historico) for lote in lotes) if e is not None
-        ]
-        if not errores:
-            return cierres[-1][0], cierres[-1][1], None
-        mediana = statistics.median(errores)
-        if mejor is None or mediana < mejor[2]:
-            mejor = (fecha, nav, mediana)
-    fecha, nav, mediana = mejor
-    if mediana > TOL_MEDIANA:
-        raise ValueError(
-            f"ningún NAV reciente encaja con el histórico de Yahoo (mejor: {fecha:%d/%m/%Y}, "
-            f"error mediano {mediana:.2%})"
-        )
-    return fecha, nav, mediana
+    if not ordenes:
+        raise ValueError("no tiene ninguna orden finalizada")
+    return ordenes, ignoradas
 
 
 def preparar(
@@ -143,12 +107,10 @@ def preparar(
     nombre: str,
     divisa: str,
     conn,
-    leer_historico=None,
     ticker_yahoo=None,
     grupo: str = grupos.GRUPO_POR_DEFECTO,
 ) -> dict:
     """Valida un CSV y calcula sus compras, sin escribir nada. Lanza ValueError si algo falla."""
-    leer_historico = leer_historico or yahoo.leer_historico
     isin = normalizar_isin(isin)
     nombre = nombre.strip()
     divisa = divisa.strip().upper()
@@ -160,12 +122,17 @@ def preparar(
     if not re.fullmatch(r"[A-Z]{3}", divisa):
         raise ValueError(f"divisa no válida: {divisa!r} (se espera un código como EUR)")
     try:
-        lotes = leer_csv(ruta)
+        ordenes, ignoradas = leer_csv(ruta)
     except OSError as e:
         raise ValueError(f"no se puede leer {ruta}: {e.strerror}") from None
-    fecha_export = datetime.fromtimestamp(ruta.stat().st_mtime).date()
-    if max(lote["fecha"] for lote in lotes) > fecha_export:
-        raise ValueError("hay lotes con fecha posterior a la del fichero")
+    errores = []
+    for o in ordenes:
+        if o["isin"] != isin:
+            errores.append(f"el CSV es del ISIN {o['isin']} y has indicado {isin}")
+        if o["divisa"] != divisa:
+            errores.append(f"el CSV está en {o['divisa']} y has indicado {divisa}")
+    if errores:
+        raise ValueError("\n".join(dict.fromkeys(errores)))
     existente = next((i for i in instrumentos.listar(conn) if i["identificador"] == isin), None)
     grupo_existente = grupos.obtener_por_nombre(conn, grupo)
     if grupo_existente:
@@ -180,27 +147,14 @@ def preparar(
             "bórralas antes de reimportar"
         )
     ticker_yahoo = (ticker_yahoo or "").strip().upper() or None
-    simbolo = ticker_yahoo or (existente["ticker_yahoo"] if existente else None) or isin
-    historico, divisa_yahoo = leer_historico(
-        simbolo,
-        min(lote["fecha"] for lote in lotes) - timedelta(days=10),
-    )
-    if divisa_yahoo != divisa:
-        raise ValueError(f"Yahoo da {isin} en {divisa_yahoo} y has indicado {divisa}")
-    fecha_nav, nav, error = elegir_nav(lotes, historico, fecha_export)
-    operaciones, con_precio_yahoo = [], 0
-    for lote in lotes:
-        error_lote = _error_lote(lote, nav, historico)
-        if error_lote is not None and error_lote > TOL_YAHOO:
-            # Lote que no encaja (p. ej. un traspaso entre fondos): se usa el cierre de Yahoo del
-            # día de la fecha fiscal (o el siguiente): participaciones = inversión / precio.
-            precio = next(p for f, p in historico if f >= lote["fecha"])
-            participaciones = (lote["inversion"] / precio).quantize(DECIMALES, ROUND_HALF_UP)
-            con_precio_yahoo += 1
-        else:
-            participaciones = (lote["valor"] / nav).quantize(DECIMALES, rounding=ROUND_HALF_UP)
-            precio = (lote["inversion"] / participaciones).quantize(DECIMALES, ROUND_HALF_UP)
-        operaciones.append((lote["fecha"], participaciones, precio))
+    operaciones = [
+        (
+            o["fecha"],
+            o["participaciones"].quantize(DECIMALES, ROUND_HALF_UP),
+            (o["importe"] / o["participaciones"]).quantize(DECIMALES, ROUND_HALF_UP),
+        )
+        for o in ordenes
+    ]
     return {
         "isin": isin,
         "nombre": nombre,
@@ -209,10 +163,8 @@ def preparar(
         "grupo": grupo,
         "id": existente["id"] if existente else None,
         "compras": sorted(operaciones),
-        "nav": (fecha_nav, nav, error),
-        "con_precio_yahoo": con_precio_yahoo,
-        "invertido": sum(lote["inversion"] for lote in lotes),
-        "valor": sum(lote["valor"] for lote in lotes),
+        "ignoradas": ignoradas,
+        "invertido": sum(o["importe"] for o in ordenes),
     }
 
 
@@ -252,35 +204,27 @@ def importar(
     isin: str,
     nombre: str,
     divisa: str,
-    leer_historico=None,
     ticker_yahoo: str | None = None,
     grupo: str = grupos.GRUPO_POR_DEFECTO,
 ) -> dict:
     """Valida el CSV y, si no hay ningún error, lo escribe en el grupo indicado.
 
-    Devuelve el plan (compras calculadas, NAV elegido...). Lanza ValueError si algo falla.
+    Devuelve el plan (compras calculadas...). Lanza ValueError si algo falla.
     """
-    plan = preparar(Path(ruta), isin, nombre, divisa, conn, leer_historico, ticker_yahoo, grupo)
+    plan = preparar(Path(ruta), isin, nombre, divisa, conn, ticker_yahoo, grupo)
     aplicar(conn, plan)
     return plan
 
 
 def resumen(plan: dict) -> str:
-    """Texto de una línea con lo calculado para un fondo."""
-    fecha, nav, error = plan["nav"]
-    validacion = (
-        f"error mediano {error:.2%}"
-        if error is not None
-        else "SIN VALIDAR: Yahoo no tiene histórico"
-    )
+    """Texto de una línea con lo importado de un fondo."""
     texto = (
         f"{plan['nombre']} [{plan['grupo']}]: {len(plan['compras'])} compras, "
         f"{sum(c[1] for c in plan['compras'])} participaciones, invertido {plan['invertido']} "
-        f"{plan['divisa']}, valor {plan['valor']} {plan['divisa']} "
-        f"(NAV {nav} del {fecha:%d/%m/%Y}, {validacion})"
+        f"{plan['divisa']}"
     )
-    if plan["con_precio_yahoo"]:
-        texto += f", {plan['con_precio_yahoo']} lote(s) con precio de Yahoo"
+    if plan["ignoradas"]:
+        texto += f", {plan['ignoradas']} orden(es) en curso o rechazadas ignoradas"
     return texto
 
 
@@ -293,24 +237,21 @@ def importar_csv(
     ruta_db: str | Path = RUTA_DB,
     ticker_yahoo: str | None = None,
 ) -> dict | None:
-    """Importa un CSV de MyInvestor como un fondo nuevo, imprime un resumen y devuelve el plan.
+    """Importa un CSV de órdenes de MyInvestor como un fondo, imprime un resumen y devuelve el plan.
 
     `grupo` es el grupo (Personal, Pension...) al que van las compras; si no existe, se crea. Un
     mismo fondo se puede importar en varios grupos.
     Si el fondo ya tiene compras en ese grupo, avisa, no hace nada y devuelve None (así se puede
     repetir una serie de llamadas sin que se pare). Con cualquier otro problema lanza ValueError
-    sin escribir nada: ISIN, nombre o divisa no válidos, CSV mal formado, divisa distinta de la
-    de Yahoo, NAV que no encaja...
-    `ruta_db` es la base de datos a usar. `ticker_yahoo`
-    (opcional, ej. "0P00009PQ4.F") es el símbolo con el que se busca el histórico en Yahoo cuando
-    el ISIN no da datos. Se guarda en el instrumento y se usa también para los precios y el
-    histórico posteriores; el fondo se guarda siempre con su ISIN como identificador.
+    sin escribir nada: ISIN, nombre o divisa no válidos o distintos de los del CSV, CSV mal
+    formado...
+    `ruta_db` es la base de datos a usar. `ticker_yahoo` (opcional, ej. "0P00009PQ4.F") es el
+    símbolo con el que se buscan precios e histórico en Yahoo cuando el ISIN no da datos; el
+    fondo se guarda siempre con su ISIN como identificador.
     """
     conn = db.conectar(ruta_db)
     try:
-        plan = importar(
-            conn, Path(ruta), isin, nombre, divisa, ticker_yahoo=ticker_yahoo, grupo=grupo
-        )
+        plan = importar(conn, Path(ruta), isin, nombre, divisa, ticker_yahoo, grupo)
     except FondoYaImportado as e:
         print(f"AVISO: {e}. No se importa de nuevo.")
         return None

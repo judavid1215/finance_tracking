@@ -12,7 +12,6 @@ from finanzas import (  # noqa: E402
     cartera,
     compras,
     db,
-    evolucion,
     grupos,
     instrumentos,
     precios,
@@ -42,7 +41,6 @@ MENU = """
 8) Resumen por instrumento y total en EUR
 9) Poner precio actual
 16) Reparto de la cartera en % (por instrumento, tipo o divisa)
-20) Evolución de la cartera mes a mes (invertido, valor y rentabilidad; todo o un grupo)
 13) Actualizar precio de un plan de pensiones (web)
 15) Poner/cambiar identificador (ej. BTC-EUR a una cripto)
 14) Consultar precios de ahora (fondos, ETF, acciones, planes); no se guardan en el histórico
@@ -103,25 +101,9 @@ def mostrar_total(t):
         print(f"  no cuenta en el total: {nombre} ({motivo})")
 
 
-def mostrar_por_grupo(filas):
-    if len(filas) < 2:
-        return
-    print("Por grupo (EUR):")
-    for f in filas:
-        if f["valor"] is None:
-            print(f"  {f['grupo']:<25} | nada valorado todavía")
-            continue
-        rent = f"{f['rentabilidad']:+.1%}" if f["rentabilidad"] is not None else ""
-        print(
-            f"  {f['grupo']:<25} | invertido {f['invertido']:>10.2f} | valor {f['valor']:>10.2f} "
-            f"| ganancia {f['ganancia']:>+9.2f} {rent}"
-        )
-
-
 def resumen_cartera(conn, vivos):
     mostrar_cartera(cartera.resumen(conn, vivos))
     mostrar_total(cartera.total(conn, vivos))
-    mostrar_por_grupo(cartera.por_grupo(conn, vivos))
 
 
 def mostrar_reparto(r):
@@ -175,29 +157,6 @@ def pedir_grupo(conn):
     if grupo is None:
         raise ValueError(f"No existe el grupo '{nombre}'; créalo con la opción 19")
     return grupo["id"]
-
-
-def evolucion_cartera(conn):
-    """Evolución mes a mes (el último día de cada mes con datos), de toda la cartera o de un grupo."""
-    print("Grupos:", ", ".join(g["nombre"] for g in grupos.listar(conn)) or "(ninguno todavía)")
-    nombre = input("Grupo (vacío = toda la cartera): ").strip()
-    grupo_id = None
-    if nombre:
-        grupo = grupos.obtener_por_nombre(conn, nombre)
-        if grupo is None:
-            raise ValueError(f"No existe el grupo '{nombre}'")
-        grupo_id = grupo["id"]
-    filas = evolucion.mensual(evolucion.serie(conn, grupo_id))
-    if not filas:
-        print("Sin datos: faltan compras o precios (descarga el histórico con la opción 17)")
-        return
-    print("Fecha      |   Invertido |       Valor |   Ganancia | Rentab.")
-    for f in filas:
-        rent = f"{f['rentabilidad']:+.1%}" if f["rentabilidad"] is not None else ""
-        print(
-            f"{f['fecha']} | {f['invertido']:>11.2f} | {f['valor']:>11.2f} | "
-            f"{f['ganancia']:>+10.2f} | {rent:>7}"
-        )
 
 
 def gestionar_grupos(conn):
@@ -379,7 +338,6 @@ def main():
         "17": lambda: descargar_historicos(conn),
         "18": lambda: poner_ticker_yahoo(conn),
         "19": lambda: gestionar_grupos(conn),
-        "20": lambda: evolucion_cartera(conn),
     }
     while True:
         print(MENU)

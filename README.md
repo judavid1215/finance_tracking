@@ -36,19 +36,16 @@ Las bases anteriores a los grupos no se migran: hay que borrarlas y volver a imp
 ## Importar desde CSV (MyInvestor)
 
 `finanzas.importacion.importar_csv(nombre, isin, divisa, ruta, grupo="Personal", ruta_db=..., ticker_yahoo=None)`
-importa un CSV "Plusvalías y minusvalías" de MyInvestor como un fondo (uno por llamada). Lanza `ValueError` si algo falla. Cada fila es un lote que sigue en cartera (solo posiciones abiertas, sin ventas). El CSV no trae
-participaciones ni precios, así que se calculan:
+importa un CSV de **órdenes** de MyInvestor (`Fecha de la orden;ISIN;Importe estimado;Nº de participaciones;Estado`)
+como un fondo (uno por llamada). Lanza `ValueError` si algo falla.
 
-- participaciones = valor de mercado / NAV con el que MyInvestor valoró. Ese NAV es uno de los 5
-  últimos cierres de Yahoo anteriores a la fecha de modificación del fichero; se elige el que
-  hace encajar mejor el precio de compra implícito con el histórico de Yahoo.
-- precio de compra = inversión / participaciones, comisión 0.
-- excepción: un lote que difiere más de un 10 % del precio de Yahoo (p. ej. un traspaso entre
-  fondos) usa el cierre de Yahoo de su fecha fiscal: participaciones = inversión / precio.
+- Cada orden `Finalizada` es una compra: fecha, participaciones y precio = importe / participaciones
+  (comisión 0).
+- Las órdenes `En curso` y `Rechazada` se ignoran (aún no tienen participaciones) y se cuentan en el resumen.
+- El ISIN y la divisa del CSV deben coincidir con los indicados.
 
 Todo o nada: un error en cualquier fila cancela la importación y se listan todos. Un
-fondo que ya tiene compras se rechaza. Si Yahoo no tiene histórico del fondo se usa el último cierre y se marca
-"SIN VALIDAR".
+fondo que ya tiene compras en el grupo se rechaza.
 
 
 ## De dónde salen los precios
@@ -123,3 +120,21 @@ python -m venv .venv
 .\.venv\Scripts\pip install pytest ruff yfinance
 .\.venv\Scripts\python -m pytest -v
 ```
+
+## Web para el móvil
+
+Interfaz de solo lectura para ver la evolución desde el móvil: `python servir.py [puerto]` y abrir
+`http://<ip-de-la-raspberry>:8000` (puerto 8000 por defecto). Necesita `flask` (`pip install flask`).
+
+- `periodos.py`: recorta la serie diaria a 1S, 1M, 1A, YTD o Máx. La ganancia y la rentabilidad
+  son *del periodo* (se descuenta la ganancia que ya había al empezar, así que aportar dinero no
+  cuenta como ganancia). La rentabilidad es una aproximación sencilla; la ponderada por tiempo
+  (TWR) queda pendiente.
+- `evolucion.serie()` y `evolucion.aportaciones()` (las compras en euros) admiten `grupo_id` y/o
+  `instrumento_id`. En las vistas de valor y de rentabilidad, cada día con compras lleva un círculo relleno sobre la línea
+  (una compra en festivo se marca en el siguiente día con precio).
+- El botón de la esquina cambia el tema: automático (el del sistema), claro u oscuro.
+- `web/app.py`: API (`/api/opciones`, `/api/evolucion`) y página en `web/static/`
+  (Chart.js se carga desde un CDN: el móvil necesita internet para dibujar el gráfico).
+- Escucha en toda la red local y no tiene contraseña: no la expongas a internet (fuera de casa,
+  usa algo como Tailscale).

@@ -45,10 +45,13 @@ def _tasas(conn, divisa):
     return fechas, valores
 
 
-def serie(conn: sqlite3.Connection, grupo_id: int | None = None) -> list[dict]:
+def serie(
+    conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
+) -> list[dict]:
     """Una fila por día: {"fecha", "invertido", "valor", "ganancia", "rentabilidad"} en euros
     (rentabilidad en tanto por uno, None si no había nada invertido). Con grupo_id solo cuenta
-    ese grupo. Sin operaciones o sin precios, devuelve una lista vacía."""
+    ese grupo y con instrumento_id solo ese instrumento (se pueden combinar). Sin operaciones o
+    sin precios, devuelve una lista vacía."""
     pares = conn.execute(
         "SELECT instrumento_id, grupo_id FROM compras UNION SELECT instrumento_id, grupo_id "
         "FROM ventas ORDER BY 1, 2"
@@ -56,18 +59,20 @@ def serie(conn: sqlite3.Connection, grupo_id: int | None = None) -> list[dict]:
     posiciones = []  # (divisa, pasos, precios, tasas)
     inicio = None
     dias = set()
-    for instrumento_id, g in pares:
+    for inst_id, g in pares:
         if grupo_id is not None and g != grupo_id:
             continue
-        pasos = posicion.historial(conn, instrumento_id, g)
+        if instrumento_id is not None and inst_id != instrumento_id:
+            continue
+        pasos = posicion.historial(conn, inst_id, g)
         pasos = [(date.fromisoformat(f), n, inv) for f, n, inv in pasos]
         divisa = conn.execute(
-            "SELECT divisa FROM instrumentos WHERE id = ?", (instrumento_id,)
+            "SELECT divisa FROM instrumentos WHERE id = ?", (inst_id,)
         ).fetchone()[0]
         pf, pv = _carga(
             conn,
             "SELECT fecha, precio FROM precios WHERE instrumento_id = ? ORDER BY fecha",
-            (instrumento_id,),
+            (inst_id,),
         )
         posiciones.append((divisa, [p[0] for p in pasos], pasos, pf, pv, _tasas(conn, divisa)))
         dias.update(pf)
@@ -101,6 +106,43 @@ def serie(conn: sqlite3.Connection, grupo_id: int | None = None) -> list[dict]:
                 "valor": valor,
                 "ganancia": valor - invertido,
                 "rentabilidad": (valor - invertido) / invertido if invertido else None,
+            }
+        )
+    return resultado
+
+
+def aportaciones(
+    conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
+) -> list[dict]:
+    """Las compras (con su comisión) en euros al cambio de su día, por fecha:
+    {"fecha", "importe", "instrumento"}. Mismos filtros que serie()."""
+    sql = (
+        "SELECT c.fecha, c.participaciones, c.precio, c.comision, i.nombre, i.divisa "
+        "FROM compras c JOIN instrumentos i ON i.id = c.instrumento_id WHERE 1 = 1"
+    )
+    params = []
+    if grupo_id is not None:
+        sql += " AND c.grupo_id = ?"
+        params.append(grupo_id)
+    if instrumento_id is not None:
+        sql += " AND c.instrumento_id = ?"
+        params.append(instrumento_id)
+    tasas: dict = {}
+    resultado = []
+    filas = conn.execute(sql + " ORDER BY c.fecha", params)
+    for fecha, n, precio, comision, nombre, divisa in filas:
+        if divisa not in tasas:
+            tasas[divisa] = _tasas(conn, divisa)
+        dia = date.fromisoformat(fecha)
+        if tasas[divisa] is None:
+            tasa = Decimal(1)
+        else:
+            tasa = _hasta(tasas[divisa][0], tasas[divisa][1], dia) or tasas[divisa][1][0]
+        resultado.append(
+            {
+                "fecha": dia,
+                "importe": (Decimal(n) * Decimal(precio) + Decimal(comision)) * tasa,
+                "instrumento": nombre,
             }
         )
     return resultado
