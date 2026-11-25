@@ -1,22 +1,41 @@
 "use strict";
-// Maqueta de la pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones.
-// Datos de ejemplo en memoria; nada se guarda ni se lee del servidor. El 5º valor de cada compra
-// es un id de ejemplo para el botón de evolución (pide /api/aportacion/<id>: usa ids reales).
+// Pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones con los datos reales
+// (GET /api/operaciones, solo lectura). Los botones de escribir (añadir, borrar, mover, importar)
+// siguen siendo maqueta: abren su diálogo pero no guardan nada.
 (() => {
   const $ = (id) => document.getElementById(id);
 
-  const DATOS = [
-    { nombre: "Cartera principal", instrumentos: [
-      { nombre: "Fidelity MSCI World Index", ops: [
-        ["compra", "14 oct 2026", "8,12", "153,94 €", 1], ["compra", "14 sep 2026", "8,30", "150,60 €", 2], ["venta", "02 ago 2026", "2,00", "149,10 €"]] },
-      { nombre: "iShares Developed World Index", ops: [["compra", "01 sep 2026", "3,47", "30,26 €", 3]] },
-      { nombre: "DNB Fund - Technology A", ops: [["compra", "02 oct 2026", "1,05", "285,71 €", 4]] },
-      { nombre: "Amundi Core MSCI Emerging Markets", ops: [["compra", "10 jul 2026", "4,80", "208,33 €", 5], ["venta", "21 sep 2026", "2,40", "210,00 €"]] },
-    ] },
-    { nombre: "Inversiones Laura", instrumentos: [
-      { nombre: "Fidelity MSCI World Index", ops: [["compra", "05 sep 2026", "1,31", "152,67 €", 6]] },
-    ] },
-  ];
+  let DATOS = []; // grupos > instrumentos > ops, ya con los textos listos para pintar
+  const fechaOp = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+  const numero = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 6 });
+  const dinero = (n, divisa) => {
+    try {
+      return new Intl.NumberFormat("es-ES", { style: "currency", currency: divisa, maximumFractionDigits: 2 }).format(n);
+    } catch (e) {
+      return `${numero.format(n)} ${divisa}`;
+    }
+  };
+
+  // De la respuesta del servidor a lo que pinta la lista: [tipo, fecha, participaciones, importe, id, detalle]
+  function preparaDatos(r) {
+    return r.grupos.map((g) => ({
+      id: g.id,
+      nombre: g.nombre,
+      instrumentos: g.instrumentos.map((x) => ({
+        id: x.id,
+        nombre: x.nombre,
+        ops: x.operaciones.map((o) => [
+          o.tipo,
+          fechaOp.format(new Date(o.fecha + "T00:00:00")).replace(/\./g, ""),
+          numero.format(o.participaciones),
+          dinero(o.importe, x.divisa),
+          o.id,
+          `${numero.format(o.participaciones)} part. a ${dinero(o.precio, x.divisa)}` +
+            (o.comision ? ` · comisión ${dinero(o.comision, x.divisa)}` : ""),
+        ]),
+      })),
+    }));
+  }
 
   const nav = { g: null, i: null }; // índices del grupo e instrumento abiertos (null = ese nivel no está abierto)
   const grupo = () => DATOS[nav.g];
@@ -55,7 +74,7 @@
     return li;
   }
 
-  function filaOperacion([tipo, fecha, part, precio, id]) {
+  function filaOperacion([tipo, fecha, part, importe, id, detalle]) {
     const li = document.createElement("li");
     li.className = "op";
     li.innerHTML =
@@ -63,8 +82,8 @@
       '<div class="op-cuerpo"><div class="op-linea"><strong></strong><span class="op-importe"></span></div>' +
       '<div class="op-detalle"></div></div>';
     li.querySelector("strong").textContent = `${tipo === "compra" ? "Compra" : "Venta"} · ${fecha}`;
-    li.querySelector(".op-importe").textContent = precio;
-    li.querySelector(".op-detalle").textContent = `${part} participaciones`;
+    li.querySelector(".op-importe").textContent = importe;
+    li.querySelector(".op-detalle").textContent = detalle;
     if (tipo === "compra" && id) {
       const g = boton("", { aportacion: id }, "icono");
       g.setAttribute("aria-label", "Ver evolución de esta aportación");
@@ -72,7 +91,7 @@
       g.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>';
       li.append(g);
     }
-    li.dataset.resumen = `${tipo === "compra" ? "Compra" : "Venta"} ${fecha} · ${part} part. a ${precio}`;
+    li.dataset.resumen = `${tipo === "compra" ? "Compra" : "Venta"} ${fecha} · ${importe}`;
     return li;
   }
 
@@ -91,6 +110,10 @@
     });
   }
 
+  function vacio(texto) {
+    return Object.assign(document.createElement("li"), { className: "nota", textContent: texto });
+  }
+
   function pintar() {
     migas();
     const acciones = $("acciones-ops");
@@ -100,9 +123,11 @@
     $("barra-seleccion").hidden = true;
 
     if (nav.g === null) {
+      if (!DATOS.length) lista.append(vacio("Todavía no hay grupos."));
       DATOS.forEach((g, k) => lista.append(fila(g.nombre, plural(g.instrumentos.length, "instrumento", "instrumentos"), () => { nav.g = k; pintar(); })));
     } else if (nav.i === null) {
       acciones.append(boton("+ Instrumento", { abrir: "d-instrumento" }, "primario"), boton("Importar CSV", { abrir: "d-csv" }));
+      if (!grupo().instrumentos.length) lista.append(vacio("Este grupo no tiene operaciones."));
       grupo().instrumentos.forEach((x, k) => lista.append(fila(x.nombre, plural(x.ops.length, "operación", "operaciones"), () => { nav.i = k; pintar(); })));
     } else {
       acciones.append(boton("+ Añadir", { abrir: "d-anadir" }, "primario"), boton("Mover a otro grupo", { abrir: "d-mover" }));
@@ -176,5 +201,13 @@
   $("csv-sig").addEventListener("click", () => { if (paso < 3) { paso++; mostrarPaso(); } else $("d-csv").close(); });
   $("csv-atras").addEventListener("click", () => { paso--; mostrarPaso(); });
 
-  pintar();
+  // Carga inicial: si el servidor no responde se avisa en la propia lista
+  (async () => {
+    try {
+      DATOS = preparaDatos(await pedir("/api/operaciones"));
+      pintar();
+    } catch (e) {
+      $("lista-ops").replaceChildren(vacio("No se pudo cargar: " + e.message));
+    }
+  })();
 })();

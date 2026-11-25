@@ -5,6 +5,7 @@
 - GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
 - GET /api/evolucion    ?periodo=1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
+- GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
 Las cantidades salen como números normales (float): son solo para dibujar el gráfico; los
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request
 
-from finanzas import aportacion, db, evolucion, periodos
+from finanzas import aportacion, compras, db, evolucion, periodos, ventas
 
 
 def _num(x):
@@ -122,6 +123,45 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
                 ],
             }
         )
+
+    @app.get("/api/operaciones")
+    def operaciones():
+        conn = abrir()
+        try:
+            divisas = {r["id"]: r["divisa"] for r in conn.execute("SELECT id, divisa FROM instrumentos")}
+            arbol = {r["id"]: {"id": r["id"], "nombre": r["nombre"], "instrumentos": {}}
+                     for r in conn.execute("SELECT id, nombre FROM grupos ORDER BY nombre")}
+            for tipo, filas in (("compra", compras.listar(conn)), ("venta", ventas.listar(conn))):
+                for o in filas:
+                    instr = arbol[o["grupo_id"]]["instrumentos"].setdefault(
+                        o["instrumento_id"],
+                        {"id": o["instrumento_id"], "nombre": o["instrumento"],
+                         "divisa": divisas[o["instrumento_id"]], "operaciones": []},
+                    )
+                    instr["operaciones"].append(
+                        {
+                            "tipo": tipo,
+                            "id": o["id"],
+                            "fecha": o["fecha"].isoformat(),
+                            "participaciones": _num(o["participaciones"]),
+                            "precio": _num(o["precio"]),
+                            "comision": _num(o["comision"]),
+                            # compra: lo aportado (con comisión); venta: lo cobrado (menos comisión)
+                            "importe": _num(
+                                o["participaciones"] * o["precio"]
+                                + (o["comision"] if tipo == "compra" else -o["comision"])
+                            ),
+                        }
+                    )
+        finally:
+            conn.close()
+        grupos_ = []
+        for g in arbol.values():
+            instrumentos = sorted(g["instrumentos"].values(), key=lambda x: x["nombre"].lower())
+            for x in instrumentos:  # más recientes primero
+                x["operaciones"].sort(key=lambda o: (o["fecha"], o["id"]), reverse=True)
+            grupos_.append({"id": g["id"], "nombre": g["nombre"], "instrumentos": instrumentos})
+        return jsonify({"grupos": grupos_})
 
     @app.get("/api/aportacion/<int:compra_id>")
     def datos_aportacion(compra_id):

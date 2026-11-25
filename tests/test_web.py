@@ -70,6 +70,17 @@ def test_sin_datos_y_errores(cliente):
     assert cliente.get("/api/evolucion?grupo=todos&instrumento=").status_code == 200
 
 
+def test_operaciones_arbol(cliente):
+    g = cliente.get("/api/operaciones").get_json()["grupos"]
+    assert [x["nombre"] for x in g] == ["Pension", "Personal"]  # también los grupos vacíos
+    personal = next(x for x in g if x["nombre"] == "Personal")
+    (fondo,) = personal["instrumentos"]  # "Sin operaciones" no aparece
+    assert (fondo["nombre"], fondo["divisa"]) == ("Fondo A", "EUR")
+    assert fondo["operaciones"] == [
+        {"tipo": "compra", "id": 1, "fecha": "2026-01-01", "participaciones": 2, "precio": 10, "comision": 0, "importe": 20}
+    ]
+
+
 def test_aportacion(cliente):
     r = cliente.get("/api/aportacion/1").get_json()  # 2 participaciones a 10 el 1 ene
     assert (r["instrumento"], r["grupo"], r["divisa"], r["aportado"]) == ("Fondo A", "Personal", "EUR", 20)
