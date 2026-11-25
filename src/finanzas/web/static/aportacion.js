@@ -34,6 +34,18 @@
     );
   }
 
+  // Selector para saltar a otra compra del mismo instrumento y grupo (solo si hay más de una)
+  function pintarSelector(r, id, dinero) {
+    $("ap-otras").hidden = r.hermanas.length < 2;
+    $("ap-selector").replaceChildren(
+      ...r.hermanas.map((h) => {
+        const o = new Option(`${fechaLarga.format(aFecha(h.fecha))} · ${dinero.format(h.importe)}`, String(h.id));
+        o.selected = h.id === Number(id);
+        return o;
+      })
+    );
+  }
+
   function pintarGrafico() {
     if (grafico) { grafico.destroy(); grafico = null; }
     if (!datos) return;
@@ -95,10 +107,11 @@
     $("ap-titulo").textContent = "Evolución de la aportación";
     $("ap-contexto").textContent = "";
     $("ap-resumen").replaceChildren();
+    if (!$("d-aportacion").open) $("ap-otras").hidden = true; // al saltar entre compras se mantiene
     $("ap-mensaje").textContent = "Cargando…";
     $("ap-mensaje").hidden = false;
     pintarGrafico();
-    $("d-aportacion").showModal();
+    if (!$("d-aportacion").open) $("d-aportacion").showModal();
     let r;
     try {
       r = await pedir("/api/aportacion/" + id);
@@ -114,6 +127,7 @@
       `${r.grupo} · compra del ${fechaLarga.format(aFecha(r.fecha))} · ${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 6 }).format(r.participaciones)} part. a ${dinero.format(r.precio)}` +
       (r.comision ? ` (+${dinero.format(r.comision)} de comisión)` : "");
     $("ap-mensaje").hidden = true;
+    pintarSelector(r, id, dinero);
     pintarResumen(r, dinero);
     marcarVista();
     pintarGrafico();
@@ -123,6 +137,7 @@
     const b = e.target.closest("[data-aportacion]");
     if (b) abrir(b.dataset.aportacion);
   });
+  $("ap-selector").addEventListener("change", (e) => abrir(e.target.value));
   $("ap-vista").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;

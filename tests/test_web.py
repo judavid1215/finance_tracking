@@ -88,6 +88,7 @@ def test_aportacion(cliente):
         ("2026-01-01", 20), ("2026-01-05", 22), ("2026-01-10", 24)
     ]
     assert r["resumen"] == {"valor": 24, "ganancia": 4, "rentabilidad": pytest.approx(0.2)}
+    assert r["hermanas"] == [{"id": 1, "fecha": "2026-01-01", "importe": 20}]
     assert cliente.get("/api/aportacion/999").status_code == 404
 
 

@@ -72,3 +72,15 @@ def test_se_queda_en_la_divisa_del_instrumento(conn):
     precios.anadir(conn, i, date(2026, 1, 2), "110")
     s = aportacion.serie(conn, c)
     assert s["divisa"] == "USD" and s["puntos"][-1]["valor"] == Decimal("110")
+
+
+def test_hermanas_mismo_instrumento_y_grupo(conn):
+    i, otro_inst = _inst(conn), _inst(conn, "Fondo B")
+    laura = grupos.anadir(conn, "Laura")
+    a = compras.anadir(conn, i, date(2026, 1, 1), "1", "10")
+    b = compras.anadir(conn, i, date(2026, 3, 1), "2", "10", comision="1")
+    compras.anadir(conn, i, date(2026, 2, 1), "1", "10", grupo_id=laura)  # otro grupo
+    compras.anadir(conn, otro_inst, date(2026, 2, 1), "1", "10")  # otro instrumento
+    h = aportacion.serie(conn, a)["hermanas"]
+    assert [(x["id"], x["importe"]) for x in h] == [(b, Decimal("21")), (a, Decimal("10"))]
+    assert aportacion.serie(conn, b)["hermanas"] == h  # la misma lista desde cualquiera

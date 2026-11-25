@@ -21,10 +21,14 @@ def serie(conn: sqlite3.Connection, compra_id: int) -> dict | None:
     """Devuelve la compra y su evolución, o None si la compra no existe:
 
     {"instrumento", "grupo", "divisa", "fecha", "participaciones", "precio", "comision",
-     "aportado", "puntos": [{"fecha", "valor", "ganancia", "rentabilidad"}, ...]}
+     "aportado", "puntos": [{"fecha", "valor", "ganancia", "rentabilidad"}, ...],
+     "hermanas": [{"id", "fecha", "importe"}, ...]}
+
+    "hermanas" son las compras del mismo instrumento y grupo (incluida esta), de la más
+    reciente a la más antigua, para poder saltar de una a otra.
     """
     fila = conn.execute(
-        "SELECT c.instrumento_id, c.fecha, c.participaciones, c.precio, c.comision, "
+        "SELECT c.instrumento_id, c.grupo_id, c.fecha, c.participaciones, c.precio, c.comision, "
         "i.nombre AS instrumento, i.divisa, g.nombre AS grupo "
         "FROM compras c JOIN instrumentos i ON i.id = c.instrumento_id "
         "JOIN grupos g ON g.id = c.grupo_id WHERE c.id = ?",
@@ -53,6 +57,18 @@ def serie(conn: sqlite3.Connection, compra_id: int) -> dict | None:
                 "rentabilidad": (valor - aportado) / aportado,
             }
         )
+    hermanas = [
+        {
+            "id": h["id"],
+            "fecha": date.fromisoformat(h["fecha"]),
+            "importe": Decimal(h["participaciones"]) * Decimal(h["precio"]) + Decimal(h["comision"]),
+        }
+        for h in conn.execute(
+            "SELECT id, fecha, participaciones, precio, comision FROM compras "
+            "WHERE instrumento_id = ? AND grupo_id = ? ORDER BY fecha DESC, id DESC",
+            (fila["instrumento_id"], fila["grupo_id"]),
+        )
+    ]
     return {
         "instrumento": fila["instrumento"],
         "grupo": fila["grupo"],
@@ -63,4 +79,5 @@ def serie(conn: sqlite3.Connection, compra_id: int) -> dict | None:
         "comision": comision,
         "aportado": aportado,
         "puntos": puntos,
+        "hermanas": hermanas,
     }

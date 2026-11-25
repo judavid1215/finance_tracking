@@ -184,6 +184,10 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
                 "comision": _num(a["comision"]),
                 "aportado": _num(a["aportado"]),
                 "resumen": {k: _num(ultimo[k]) for k in ("valor", "ganancia", "rentabilidad")},
+                "hermanas": [
+                    {"id": h["id"], "fecha": h["fecha"].isoformat(), "importe": _num(h["importe"])}
+                    for h in a["hermanas"]
+                ],
                 "puntos": [
                     {k: p[k].isoformat() if k == "fecha" else _num(p[k]) for k in p}
                     for p in a["puntos"]
