@@ -5,6 +5,7 @@
 - GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
 - GET /api/evolucion    ?periodo=1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
+- GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
 Las cantidades salen como números normales (float): son solo para dibujar el gráfico; los
 cálculos siguen haciéndose en Decimal.
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request
 
-from finanzas import db, evolucion, periodos
+from finanzas import aportacion, db, evolucion, periodos
 
 
 def _num(x):
@@ -118,6 +119,34 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
                         "instrumentos": a["instrumentos"],
                     }
                     for a in r["aportaciones"]
+                ],
+            }
+        )
+
+    @app.get("/api/aportacion/<int:compra_id>")
+    def datos_aportacion(compra_id):
+        conn = abrir()
+        try:
+            a = aportacion.serie(conn, compra_id)
+        finally:
+            conn.close()
+        if a is None:
+            abort(404, "No existe esa compra")
+        ultimo = a["puntos"][-1]
+        return jsonify(
+            {
+                "instrumento": a["instrumento"],
+                "grupo": a["grupo"],
+                "divisa": a["divisa"],
+                "fecha": a["fecha"].isoformat(),
+                "participaciones": _num(a["participaciones"]),
+                "precio": _num(a["precio"]),
+                "comision": _num(a["comision"]),
+                "aportado": _num(a["aportado"]),
+                "resumen": {k: _num(ultimo[k]) for k in ("valor", "ganancia", "rentabilidad")},
+                "puntos": [
+                    {k: p[k].isoformat() if k == "fecha" else _num(p[k]) for k in p}
+                    for p in a["puntos"]
                 ],
             }
         )

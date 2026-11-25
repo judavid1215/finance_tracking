@@ -1,19 +1,20 @@
 "use strict";
 // Maqueta de la pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones.
-// Datos de ejemplo en memoria; nada se guarda ni se lee del servidor.
+// Datos de ejemplo en memoria; nada se guarda ni se lee del servidor. El 5º valor de cada compra
+// es un id de ejemplo para el botón de evolución (pide /api/aportacion/<id>: usa ids reales).
 (() => {
   const $ = (id) => document.getElementById(id);
 
   const DATOS = [
     { nombre: "Cartera principal", instrumentos: [
       { nombre: "Fidelity MSCI World Index", ops: [
-        ["compra", "14 oct 2026", "8,12", "153,94 €"], ["compra", "14 sep 2026", "8,30", "150,60 €"], ["venta", "02 ago 2026", "2,00", "149,10 €"]] },
-      { nombre: "iShares Developed World Index", ops: [["compra", "01 sep 2026", "3,47", "30,26 €"]] },
-      { nombre: "DNB Fund - Technology A", ops: [["compra", "02 oct 2026", "1,05", "285,71 €"]] },
-      { nombre: "Amundi Core MSCI Emerging Markets", ops: [["compra", "10 jul 2026", "4,80", "208,33 €"], ["venta", "21 sep 2026", "2,40", "210,00 €"]] },
+        ["compra", "14 oct 2026", "8,12", "153,94 €", 1], ["compra", "14 sep 2026", "8,30", "150,60 €", 2], ["venta", "02 ago 2026", "2,00", "149,10 €"]] },
+      { nombre: "iShares Developed World Index", ops: [["compra", "01 sep 2026", "3,47", "30,26 €", 3]] },
+      { nombre: "DNB Fund - Technology A", ops: [["compra", "02 oct 2026", "1,05", "285,71 €", 4]] },
+      { nombre: "Amundi Core MSCI Emerging Markets", ops: [["compra", "10 jul 2026", "4,80", "208,33 €", 5], ["venta", "21 sep 2026", "2,40", "210,00 €"]] },
     ] },
     { nombre: "Inversiones Laura", instrumentos: [
-      { nombre: "Fidelity MSCI World Index", ops: [["compra", "05 sep 2026", "1,31", "152,67 €"]] },
+      { nombre: "Fidelity MSCI World Index", ops: [["compra", "05 sep 2026", "1,31", "152,67 €", 6]] },
     ] },
   ];
 
@@ -54,7 +55,7 @@
     return li;
   }
 
-  function filaOperacion([tipo, fecha, part, precio]) {
+  function filaOperacion([tipo, fecha, part, precio, id]) {
     const li = document.createElement("li");
     li.className = "op";
     li.innerHTML =
@@ -64,6 +65,13 @@
     li.querySelector("strong").textContent = `${tipo === "compra" ? "Compra" : "Venta"} · ${fecha}`;
     li.querySelector(".op-importe").textContent = precio;
     li.querySelector(".op-detalle").textContent = `${part} participaciones`;
+    if (tipo === "compra" && id) {
+      const g = boton("", { aportacion: id }, "icono");
+      g.setAttribute("aria-label", "Ver evolución de esta aportación");
+      g.title = "Ver evolución";
+      g.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>';
+      li.append(g);
+    }
     li.dataset.resumen = `${tipo === "compra" ? "Compra" : "Venta"} ${fecha} · ${part} part. a ${precio}`;
     return li;
   }

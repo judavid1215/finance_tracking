@@ -70,6 +70,16 @@ def test_sin_datos_y_errores(cliente):
     assert cliente.get("/api/evolucion?grupo=todos&instrumento=").status_code == 200
 
 
+def test_aportacion(cliente):
+    r = cliente.get("/api/aportacion/1").get_json()  # 2 participaciones a 10 el 1 ene
+    assert (r["instrumento"], r["grupo"], r["divisa"], r["aportado"]) == ("Fondo A", "Personal", "EUR", 20)
+    assert [(p["fecha"], p["valor"]) for p in r["puntos"]] == [
+        ("2026-01-01", 20), ("2026-01-05", 22), ("2026-01-10", 24)
+    ]
+    assert r["resumen"] == {"valor": 24, "ganancia": 4, "rentabilidad": pytest.approx(0.2)}
+    assert cliente.get("/api/aportacion/999").status_code == 404
+
+
 def test_estado_sin_actualizaciones(cliente):
     assert cliente.get("/api/estado").get_json() == {"actualizado": None}
 

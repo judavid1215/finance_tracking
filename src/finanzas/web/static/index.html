@@ -78,6 +78,24 @@
     </form>
   </dialog>
 
+  <dialog id="d-aportacion">
+    <form method="dialog" class="modal">
+      <h2 id="ap-titulo"></h2>
+      <p class="contexto" id="ap-contexto"></p>
+      <div class="ap-resumen" id="ap-resumen"></div>
+      <div class="vista" id="ap-vista" role="tablist" aria-label="Vista del gráfico">
+        <button type="button" role="tab" data-vista="valor" aria-selected="true">Valor</button>
+        <button type="button" role="tab" data-vista="rentabilidad" aria-selected="false">Rentabilidad %</button>
+      </div>
+      <div class="grafico ap-grafico">
+        <canvas id="ap-grafico"></canvas>
+        <p id="ap-mensaje" class="mensaje" hidden></p>
+      </div>
+      <p class="nota">En la divisa del instrumento. Las ventas no se tienen en cuenta.</p>
+      <div class="pie"><button value="cerrar">Cerrar</button></div>
+    </form>
+  </dialog>
+
   <dialog id="d-instrumento">
     <form method="dialog" class="modal">
       <h2>Nuevo instrumento</h2>
@@ -173,5 +191,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/operaciones.js"></script>
+  <script src="/static/aportacion.js"></script>
 </body>
 </html>
