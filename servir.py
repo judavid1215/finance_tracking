@@ -26,7 +26,7 @@ ultima = {"hora": None}  # cuándo terminó la última actualización (ISO UTC);
 
 def _errores(res: dict) -> list[str]:
     """Los fallos de una actualización, en texto (Yahoo puede fallar sin que sea grave)."""
-    malos = [f"{f['nombre']}: {f['mensaje']}" for f in res["historicos"] + res["ahora"]["filas"] + res["ticks"] if f["estado"] == "error"]
+    malos = [f"{f['nombre']}: {f['mensaje']}" for f in res["historicos"] + res["ahora"]["filas"] + res["horas"] + res["ticks"] if f["estado"] == "error"]
     malos += [f"{f['divisa']}/EUR: {f['mensaje']}" for f in res["divisas"] + res["ahora"]["divisas"] if f["estado"] == "error"]
     return malos
 

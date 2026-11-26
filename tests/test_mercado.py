@@ -16,8 +16,10 @@ def conn(tmp_path):
 @pytest.fixture(autouse=True)
 def sin_cache_divisas():
     mercado._divisas_ok.clear()
+    mercado._ultimo_intento.clear()
     yield
     mercado._divisas_ok.clear()
+    mercado._ultimo_intento.clear()
 
 
 def utc(texto):
@@ -207,3 +209,133 @@ def test_vista_precios_mercado_detalle(conn):
         "Bitcoin", "BTC-EUR", "Cripto", "EUR", "80010",
     )
     assert f["hora_local"] is not None
+
+
+AHORA = utc("2026-11-26T12:30:00")
+
+
+def falso_horario(monkeypatch, barras, divisa="EUR"):
+    pedidos = []
+
+    def leer(simbolo, desde):
+        pedidos.append((simbolo, desde))
+        return barras, divisa
+
+    monkeypatch.setattr(mercado, "leer_historico_horario", leer)
+    return pedidos
+
+
+def test_horas_primera_vez_baja_desde_la_primera_compra(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")  # compra el 2026-01-01
+    pedidos = falso_horario(
+        monkeypatch,
+        [
+            (utc("2026-11-26T09:00:00"), Decimal("1")),
+            (utc("2026-11-26T10:00:00"), Decimal("2")),
+            (utc("2026-11-26T12:00:00"), Decimal("3")),  # hora sin terminar: no entra
+        ],
+    )
+    [fila] = mercado.rellenar_horas(conn, AHORA)
+    assert fila == {"nombre": "Bitcoin", "estado": "ok", "nuevas": 2}
+    assert pedidos == [("BTC-EUR", utc("2026-01-01T00:00:00"))]
+    assert filas(conn, id_) == [("2026-11-26T09:00:00Z", "1"), ("2026-11-26T10:00:00Z", "2")]
+
+
+def test_horas_us_con_barras_a_y_media_se_guardan_a_la_hora_en_punto(conn, monkeypatch):
+    id_ = comprar(conn, "Apple", "accion", "AAPL")
+    falso_horario(
+        monkeypatch,
+        [(utc("2026-11-25T14:30:00"), Decimal("7")), (utc("2026-11-25T15:30:00"), Decimal("8"))],
+    )
+    mercado.rellenar_horas(conn, AHORA)
+    assert filas(conn, id_) == [("2026-11-25T14:00:00Z", "7"), ("2026-11-25T15:00:00Z", "8")]
+
+
+def test_horas_no_pisa_una_hora_que_ya_tiene_ticks(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    guardar(conn, id_, "2026-11-26T09:20:00Z", "5")
+    falso_horario(
+        monkeypatch,
+        [(utc("2026-11-26T09:00:00"), Decimal("1")), (utc("2026-11-26T10:00:00"), Decimal("2"))],
+    )
+    [fila] = mercado.rellenar_horas(conn, AHORA)
+    assert fila["nuevas"] == 1
+    assert filas(conn, id_) == [("2026-11-26T09:20:00Z", "5"), ("2026-11-26T10:00:00Z", "2")]
+
+
+def test_horas_despues_pide_desde_lo_ultimo_guardado(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    guardar(conn, id_, "2026-01-02T00:00:00Z", "1")
+    guardar(conn, id_, "2026-11-26T05:00:00Z", "1")
+    pedidos = falso_horario(monkeypatch, [])
+    mercado.rellenar_horas(conn, AHORA)
+    assert pedidos == [("BTC-EUR", utc("2026-11-26T05:00:00"))]
+
+
+def test_horas_si_lo_guardado_empieza_tarde_baja_todo_otra_vez(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    guardar(conn, id_, "2026-06-01T00:00:00Z", "1")  # mucho después de la compra
+    guardar(conn, id_, "2026-11-26T05:00:00Z", "1")
+    pedidos = falso_horario(monkeypatch, [])
+    mercado.rellenar_horas(conn, AHORA)
+    assert pedidos == [("BTC-EUR", utc("2026-01-01T00:00:00"))]
+
+
+def test_horas_limite_de_yahoo(conn, monkeypatch):
+    from datetime import timedelta
+
+    id_ = instrumentos.anadir(conn, "Bitcoin", "cripto", "EUR", "BTC-EUR")
+    compras.anadir(conn, id_, date(2020, 1, 1), "1", "10")
+    pedidos = falso_horario(monkeypatch, [])
+    mercado.rellenar_horas(conn, AHORA)
+    assert pedidos[0][1] == AHORA - timedelta(days=mercado.DIAS_HISTORICO_HORARIO)
+
+
+def test_horas_con_ticks_recientes_no_consulta(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    guardar(conn, id_, "2026-01-02T00:00:00Z", "1")  # el histórico ya está
+    guardar(conn, id_, "2026-11-26T11:00:00Z", "1")  # hace 1 h 30
+    pedidos = falso_horario(monkeypatch, [])
+    assert mercado.rellenar_horas(conn, AHORA)[0]["estado"] == "al_dia"
+    assert pedidos == []
+
+
+def test_horas_con_ticks_recientes_pero_sin_historico_lo_baja(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    guardar(conn, id_, "2026-11-26T12:00:00Z", "1")  # solo ticks de hoy
+    pedidos = falso_horario(monkeypatch, [(utc("2026-11-20T09:00:00"), Decimal("4"))])
+    assert mercado.rellenar_horas(conn, AHORA)[0]["nuevas"] == 1
+    assert pedidos == [("BTC-EUR", utc("2026-01-01T00:00:00"))]
+
+
+def test_horas_no_repite_la_consulta_en_una_hora(conn, monkeypatch):
+    comprar(conn, "Apple", "accion", "AAPL")
+    pedidos = falso_horario(monkeypatch, [])
+    mercado.rellenar_horas(conn, AHORA)
+    from datetime import timedelta
+
+    assert mercado.rellenar_horas(conn, AHORA + timedelta(minutes=2))[0]["estado"] == "al_dia"
+    mercado.rellenar_horas(conn, AHORA + timedelta(hours=1, minutes=1))
+    assert len(pedidos) == 2
+
+
+def test_horas_divisa_distinta_o_fallo_de_red_no_guardan(conn, monkeypatch):
+    id_ = comprar(conn, "Bitcoin", "cripto", "BTC-EUR")
+    falso_horario(monkeypatch, [(utc("2026-11-26T09:00:00"), Decimal("1"))], divisa="USD")
+    assert mercado.rellenar_horas(conn, AHORA)[0]["estado"] == "error"
+    mercado._ultimo_intento.clear()
+
+    def falla(simbolo, desde):
+        raise OSError("sin red")
+
+    monkeypatch.setattr(mercado, "leer_historico_horario", falla)
+    [fila] = mercado.rellenar_horas(conn, AHORA)
+    assert fila["estado"] == "error" and "sin red" in fila["mensaje"]
+    assert filas(conn, id_) == []
+
+
+def test_horas_ignora_fondos(conn, monkeypatch):
+    comprar(conn, "Fondo", "fondo", "LU0996175948")
+    pedidos = falso_horario(monkeypatch, [])
+    assert mercado.rellenar_horas(conn, AHORA) == []
+    assert pedidos == []

@@ -145,6 +145,7 @@ def test_refrescar_guarda_el_precio_de_ahora(conn, monkeypatch):
     monkeypatch.setattr(yahoo, "descargar_historico", lambda c, i: (None, None, 0))
     falso_yahoo(monkeypatch)  # yahoo.consultar / actualizar de pega
     monkeypatch.setattr(mercado, "leer_ultimas_barras", lambda simbolos: {})
+    monkeypatch.setattr(mercado, "leer_historico_horario", lambda simbolo, desde: ([], None))
     monkeypatch.setattr(
         yahoo, "actualizar", lambda c, i: (precios.anadir(c, i, date(2026, 11, 22), "50") or (date(2026, 11, 22), Decimal("50")))
     )

@@ -2,7 +2,7 @@
 
 const ETIQUETAS_PERIODO = { "1D": "Día", "1S": "1S", "1M": "1M", "1A": "1A", YTD: "YTD", MAX: "Máx" };
 
-const estado = { periodo: "1M", vista: "valor", grupo: "todos", instrumento: "todos", tema: "auto" };
+const estado = { periodo: "1M", vista: "valor", grupo: "todos", instrumento: "todos", tema: "auto", ocultas: [] };
 const TEMAS = { auto: ["◐", "Tema: automático"], claro: ["☀", "Tema: claro"], oscuro: ["☾", "Tema: oscuro"] };
 let grafico = null;
 let ultimosDatos = null;
@@ -112,6 +112,8 @@ function configuracion() {
   if (!r || !r.puntos.length) return null;
 
   const etiquetas = r.puntos.map((p) => p.fecha);
+  // Las series que el usuario ocultó (tocando la leyenda) siguen ocultas al repintar.
+  const oculta = (label) => estado.ocultas.includes(label);
   const eje = { color: css("--suave"), font: { size: 11 } };
   let datasets, formatoY, formatoTooltip;
 
@@ -119,6 +121,7 @@ function configuracion() {
   const compras = new Map((r.aportaciones || []).map((a) => [a.fecha, a]));
   const marcas = (campo, color) => compras.size ? [{
     label: "Compras",
+    hidden: oculta("Compras"),
     data: r.puntos.map((p) => (compras.has(p.fecha) ? p[campo] : null)),
     showLine: false,
     borderColor: css("--superficie"),
@@ -135,8 +138,8 @@ function configuracion() {
 
   if (estado.vista === "valor") {
     datasets = [
-      { label: "Valor", data: r.puntos.map((p) => p.valor), borderColor: css("--acento"), borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
-      { label: "Invertido", data: r.puntos.map((p) => p.invertido), borderColor: css("--suave"), borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 0, stepped: true },
+      { label: "Valor", hidden: oculta("Valor"), data: r.puntos.map((p) => p.valor), borderColor: css("--acento"), borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
+      { label: "Invertido", hidden: oculta("Invertido"), data: r.puntos.map((p) => p.invertido), borderColor: css("--suave"), borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 0, stepped: true },
       ...marcas("valor", css("--acento")),
     ];
     formatoY = (v) => euros.format(v);
@@ -146,7 +149,7 @@ function configuracion() {
     const sube = (r.resumen.rentabilidad || 0) >= 0;
     const color = css(sube ? "--sube" : "--baja");
     datasets = [
-      { label: "Rentabilidad", data: r.puntos.map((p) => (p.rentabilidad === null ? null : p.rentabilidad)), borderColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15, spanGaps: true },
+      { label: "Rentabilidad", hidden: oculta("Rentabilidad"), data: r.puntos.map((p) => (p.rentabilidad === null ? null : p.rentabilidad)), borderColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15, spanGaps: true },
       ...marcas("rentabilidad", color),
     ];
     formatoY = (v) => pct.format(v);
@@ -163,7 +166,19 @@ function configuracion() {
       animation: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: { display: true, labels: { color: css("--suave"), boxWidth: 14, usePointStyle: true } },
+        legend: {
+          display: true,
+          labels: { color: css("--suave"), boxWidth: 14, usePointStyle: true },
+          // Como el comportamiento normal (ocultar/mostrar la serie), pero recordando el estado.
+          onClick: (e, item, legend) => {
+            const ch = legend.chart, visible = ch.isDatasetVisible(item.datasetIndex);
+            ch.setDatasetVisibility(item.datasetIndex, !visible);
+            const resto = estado.ocultas.filter((l) => l !== item.text);
+            estado.ocultas = visible ? [...resto, item.text] : resto;
+            guardar();
+            ch.update();
+          },
+        },
         tooltip: {
           callbacks: {
             title: (items) => (esDia() ? fechaHora.format(new Date(items[0].label)) : fechaLarga.format(aFecha(items[0].label))),

@@ -141,11 +141,14 @@ def refrescar(conn: sqlite3.Connection) -> dict:
     precio y el tipo de cambio de ahora (el día de hoy, que se sustituye en cada llamada y se
     cierra con el histórico del día siguiente). También guarda el tick de ahora de ETFs,
     acciones y cripto y compacta los ticks viejos a uno por hora (ver mercado.py).
-    Devuelve {"historicos", "divisas", "ahora", "ticks"} con los resultados de cada paso."""
+    Antes del tick rellena las horas que falten (barras de 1 hora de Yahoo).
+    Devuelve {"historicos", "divisas", "ahora", "horas", "ticks", "compactados"} con los
+    resultados de cada paso."""
     return {
         "historicos": descargar_historicos(conn),
         "divisas": descargar_historicos_divisas(conn),
         "ahora": consultar_todos(conn, guardar=True),
+        "horas": mercado.rellenar_horas(conn),
         "ticks": mercado.registrar_ticks(conn),
         "compactados": mercado.compactar(conn),
     }
