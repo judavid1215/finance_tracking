@@ -251,3 +251,25 @@ def test_importar_csv_actualiza_precios_despues(tmp_path):
     assert llamadas == [1]
     assert c.post("/api/importar", data=_csv(nombre="X")).status_code == 422  # ya importado
     assert llamadas == [1]  # si falla no se actualiza
+
+
+def test_crear_y_borrar_grupo(cliente):
+    r = cliente.post("/api/grupos", json={"nombre": "Nuevo"})
+    assert r.status_code == 201
+    nuevo = r.get_json()["id"]
+    assert cliente.post("/api/grupos", json={"nombre": "Nuevo"}).status_code == 422
+    assert cliente.post("/api/grupos", json={"nombre": "  "}).status_code == 422
+    assert any(g["id"] == nuevo for g in cliente.get("/api/operaciones").get_json()["grupos"])
+    grupo, _ = _ids(cliente)  # tiene operaciones: no se puede borrar
+    assert cliente.delete(f"/api/grupos/{grupo}").status_code == 422
+    assert cliente.delete(f"/api/grupos/{nuevo}").status_code == 204
+    assert cliente.delete(f"/api/grupos/{nuevo}").status_code == 404
+
+
+def test_borrar_grupo_con_operaciones(cliente):
+    grupo, inst = _ids(cliente)
+    assert cliente.delete(f"/api/grupos/{grupo}").status_code == 422
+    assert cliente.delete(f"/api/grupos/{grupo}?con_operaciones=1").status_code == 204
+    arbol = cliente.get("/api/operaciones").get_json()["grupos"]
+    assert all(g["id"] != grupo for g in arbol)
+    assert any(i["id"] == inst for g in arbol for i in g["instrumentos"])  # sigue en el otro grupo

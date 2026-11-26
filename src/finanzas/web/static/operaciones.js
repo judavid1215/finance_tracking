@@ -41,7 +41,11 @@
 
   async function enviar(url, opciones) {
     const r = await fetch(url, opciones);
-    if (!r.ok) throw new Error((await r.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || r.statusText);
+    if (!r.ok) {
+      // el servidor responde con una página HTML de error: se enseña solo el mensaje
+      const html = new DOMParser().parseFromString(await r.text(), "text/html");
+      throw new Error(html.querySelector("p")?.textContent.trim() || r.statusText);
+    }
   }
   async function recargar() {
     DATOS = preparaDatos(await pedir("/api/operaciones"));
@@ -148,10 +152,11 @@
     $("barra-seleccion").hidden = true;
 
     if (nav.g === null) {
+      acciones.append(boton("+ Grupo", { abrir: "d-grupo" }, "primario"));
       if (!DATOS.length) lista.append(vacio("Todavía no hay grupos."));
       DATOS.forEach((g, k) => lista.append(fila(g.nombre, plural(g.instrumentos.length, "instrumento", "instrumentos"), () => { nav.g = k; pintar(); })));
     } else if (nav.i === null) {
-      acciones.append(boton("+ Instrumento", { abrir: "d-instrumento" }, "primario"), boton("Importar CSV", { abrir: "d-csv" }));
+      acciones.append(boton("+ Instrumento", { abrir: "d-instrumento" }, "primario"), boton("Importar CSV", { abrir: "d-csv" }), boton("Borrar grupo", { borrarGrupo: "1" }, "peligro"));
       if (!grupo().instrumentos.length) lista.append(vacio("Este grupo no tiene operaciones."));
       grupo().instrumentos.forEach((x, k) => lista.append(fila(x.nombre, plural(x.ops.length, "operación", "operaciones"), () => { nav.i = k; pintar(); })));
     } else {
@@ -172,6 +177,9 @@
       for (const c of ["op-part", "op-precio"]) $(c).value = "";
       $("op-comision").value = "0";
       mostrarTotal();
+    } else if (id === "d-grupo") {
+      $("grupo-nombre").value = "";
+      error("error-grupo", "");
     } else if (id === "d-instrumento") {
       $("ctx-instrumento").textContent = `Grupo: ${grupo().nombre}`;
     } else if (id === "d-csv") {
@@ -233,6 +241,41 @@
     if (!b) return;
     preparar(b.dataset.abrir);
     $(b.dataset.abrir).showModal();
+  });
+
+  // Crear grupo; si el servidor lo rechaza (nombre vacío o repetido) el diálogo sigue abierto
+  $("crear-grupo").addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!$("d-grupo").querySelector("form").reportValidity()) return;
+    try {
+      await enviar("/api/grupos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: $("grupo-nombre").value }),
+      });
+      $("d-grupo").close();
+      await recargar();
+    } catch (err) {
+      error("error-grupo", err.message);
+    }
+  });
+
+  // Borrar el grupo abierto (el servidor solo lo permite si está vacío)
+  document.addEventListener("click", async (e) => {
+    if (!e.target.closest("[data-borrar-grupo]")) return;
+    const g = grupo();
+    const n = g.instrumentos.reduce((t, x) => t + x.ops.length, 0);
+    const aviso = n
+      ? `¿Borrar el grupo «${g.nombre}» con sus ${plural(n, "operación", "operaciones")} (${plural(g.instrumentos.length, "instrumento", "instrumentos")})? Los instrumentos se conservan, pero las operaciones no se pueden recuperar.`
+      : `¿Borrar el grupo «${g.nombre}»?`;
+    if (!confirm(aviso)) return;
+    try {
+      await enviar(`/api/grupos/${g.id}?con_operaciones=1`, { method: "DELETE" });
+      nav.g = nav.i = null;
+      await recargar();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 
   // Borrar el instrumento entero (todas sus operaciones, en todos los grupos, y sus precios)

@@ -100,6 +100,18 @@
     </form>
   </dialog>
 
+  <dialog id="d-grupo">
+    <form method="dialog" class="modal">
+      <h2>Nuevo grupo</h2>
+      <label class="campo">Nombre <input type="text" id="grupo-nombre" required></label>
+      <p class="mensaje" id="error-grupo" hidden></p>
+      <div class="pie">
+        <button value="cancelar">Cancelar</button>
+        <button class="primario" value="ok" id="crear-grupo">Crear</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="d-instrumento">
     <form method="dialog" class="modal">
       <h2>Nuevo instrumento</h2>

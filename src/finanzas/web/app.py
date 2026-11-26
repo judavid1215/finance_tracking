@@ -8,6 +8,7 @@
 - GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
   PUT /api/operaciones/<tipo>/<id>  edita fecha, participaciones, precio y comisión
+- POST /api/grupos  (JSON: nombre) crea un grupo; DELETE /api/grupos/<id> lo borra si está vacío (con ?con_operaciones=1, también sus operaciones)
 - DELETE /api/instrumentos/<id>  borra el instrumento con todas sus operaciones y precios
 - POST /api/importar/vista-previa  (multipart: archivo, grupo) lee un CSV de MyInvestor sin guardar
   POST /api/importar  (multipart: archivo, grupo, nombre, ticker_yahoo) lo importa al grupo
@@ -29,6 +30,7 @@ from finanzas import (
     compras,
     db,
     evolucion,
+    grupos as grupos_,
     importacion,
     instrumentos,
     periodos,
@@ -311,6 +313,36 @@ def crear_app(
             conn.close()
         tras_importar()  # sin precios no se puede dibujar nada: se bajan ya
         return jsonify({"resumen": importacion.resumen(plan)}), 201
+
+    @app.post("/api/grupos")
+    def crear_grupo():
+        d = request.get_json(silent=True) or {}
+        conn = abrir()
+        try:
+            try:
+                id_ = grupos_.anadir(conn, str(d.get("nombre") or ""))
+            except ValueError as e:  # nombre vacío o repetido
+                abort(422, str(e))
+        finally:
+            conn.close()
+        return jsonify({"id": id_}), 201
+
+    @app.delete("/api/grupos/<int:grupo_id>")
+    def borrar_grupo(grupo_id):
+        conn = abrir()
+        try:
+            try:
+                if request.args.get("con_operaciones") == "1":
+                    existia = grupos_.borrar_con_operaciones(conn, grupo_id)
+                else:
+                    existia = grupos_.borrar(conn, grupo_id)
+            except ValueError as e:  # todavía tiene compras o ventas
+                abort(422, str(e))
+        finally:
+            conn.close()
+        if not existia:
+            abort(404, "No existe ese grupo")
+        return "", 204
 
     @app.delete("/api/instrumentos/<int:instrumento_id>")
     def borrar_instrumento(instrumento_id):

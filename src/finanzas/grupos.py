@@ -95,3 +95,19 @@ def borrar(conn: sqlite3.Connection, id: int) -> bool:
     cur = conn.execute("DELETE FROM grupos WHERE id = ?", (id,))
     conn.commit()
     return cur.rowcount == 1
+
+
+def borrar_con_operaciones(conn: sqlite3.Connection, id: int) -> bool:
+    """Borra un grupo y todas sus compras y ventas (los instrumentos se conservan).
+
+    Todo junto o nada. Devuelve True si existía. Es irreversible.
+    """
+    try:
+        conn.execute("DELETE FROM ventas WHERE grupo_id = ?", (id,))
+        conn.execute("DELETE FROM compras WHERE grupo_id = ?", (id,))
+        cur = conn.execute("DELETE FROM grupos WHERE id = ?", (id,))
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+    return cur.rowcount == 1
