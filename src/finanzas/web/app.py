@@ -3,7 +3,7 @@
 - GET /                 la página (static/index.html)
 - GET /api/opciones     grupos e instrumentos con operaciones (y en qué grupos), para los selectores
 - GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
-- GET /api/evolucion    ?periodo=1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
+- GET /api/evolucion    ?periodo=1D|1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
 - GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
@@ -33,6 +33,7 @@ from finanzas import (
     grupos as grupos_,
     importacion,
     instrumentos,
+    mercado,
     periodos,
     ventas,
 )
@@ -107,29 +108,46 @@ def crear_app(
             periodos.inicio(periodo, hoy())  # solo para validar el nombre
         except ValueError as e:
             abort(400, str(e))
+        intradia = periodo.upper() == periodos.INTRADIA
         conn = abrir()
         try:
             try:
                 grupo, instrumento = _entero("grupo"), _entero("instrumento")
-                filas = evolucion.serie(conn, grupo, instrumento)
-                compras = evolucion.aportaciones(conn, grupo, instrumento)
+                if intradia:
+                    filas = evolucion.serie_intradia(conn, grupo, instrumento)
+                    compras = []
+                else:
+                    filas = evolucion.serie(conn, grupo, instrumento)
+                    compras = evolucion.aportaciones(conn, grupo, instrumento)
             except ValueError as e:  # p. ej. falta el tipo de cambio de una divisa
                 abort(422, str(e))
         finally:
             conn.close()
-        r = periodos.recortar(filas, periodo, hoy(), compras)
+        if intradia:
+            r = periodos.recortar_dia(filas)
+        else:
+            r = periodos.recortar(filas, periodo, hoy(), compras)
         resumen = r["resumen"]
         # Con un instrumento concreto: su último precio (para compararlo con el banco).
         precio = None
         if instrumento is not None and r["hasta"]:
             conn = abrir()
             try:
-                f = conn.execute(
-                    "SELECT p.fecha, p.precio, i.divisa FROM precios p "
-                    "JOIN instrumentos i ON i.id = p.instrumento_id "
-                    "WHERE p.instrumento_id = ? AND p.fecha <= ? ORDER BY p.fecha DESC LIMIT 1",
-                    (instrumento, r["hasta"].isoformat()),
-                ).fetchone()
+                if intradia:  # el último tick (con su hora), no el cierre diario
+                    f = conn.execute(
+                        "SELECT p.momento, p.precio, i.divisa FROM precios_mercado p "
+                        "JOIN instrumentos i ON i.id = p.instrumento_id "
+                        "WHERE p.instrumento_id = ? AND p.momento <= ? "
+                        "ORDER BY p.momento DESC LIMIT 1",
+                        (instrumento, mercado.formatear(r["hasta"])),
+                    ).fetchone()
+                else:
+                    f = conn.execute(
+                        "SELECT p.fecha, p.precio, i.divisa FROM precios p "
+                        "JOIN instrumentos i ON i.id = p.instrumento_id "
+                        "WHERE p.instrumento_id = ? AND p.fecha <= ? ORDER BY p.fecha DESC LIMIT 1",
+                        (instrumento, r["hasta"].isoformat()),
+                    ).fetchone()
             finally:
                 conn.close()
             if f:

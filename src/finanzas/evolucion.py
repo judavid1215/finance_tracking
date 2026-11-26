@@ -15,7 +15,7 @@ primera operación.
 
 import sqlite3
 from bisect import bisect_right
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from finanzas import divisas, posicion
@@ -46,18 +46,16 @@ def _tasas(conn, divisa):
     return fechas, valores
 
 
-def serie(
-    conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
-) -> list[dict]:
-    """Una fila por día: {"fecha", "invertido", "valor", "ganancia", "rentabilidad"} en euros
-    (rentabilidad en tanto por uno, None si no había nada invertido). Con grupo_id solo cuenta
-    ese grupo y con instrumento_id solo ese instrumento (se pueden combinar). Sin operaciones o
-    sin precios, devuelve una lista vacía."""
+def _posiciones(conn, grupo_id, instrumento_id):
+    """Las posiciones (instrumento, grupo) a contar: (posiciones, inicio, dias), donde cada
+    posición es (instrumento_id, divisa, fechas de operación, pasos, fechas de precio, precios,
+    tasas), inicio la fecha de la primera operación (None si no hay) y dias las fechas con precio
+    o con operación."""
     pares = conn.execute(
         "SELECT instrumento_id, grupo_id FROM compras UNION SELECT instrumento_id, grupo_id "
         "FROM ventas ORDER BY 1, 2"
     ).fetchall()
-    posiciones = []  # (divisa, pasos, precios, tasas)
+    posiciones = []
     inicio = None
     dias = set()
     for inst_id, g in pares:
@@ -75,19 +73,32 @@ def serie(
             "SELECT fecha, precio FROM precios WHERE instrumento_id = ? ORDER BY fecha",
             (inst_id,),
         )
-        posiciones.append((divisa, [p[0] for p in pasos], pasos, pf, pv, _tasas(conn, divisa)))
+        posiciones.append(
+            (inst_id, divisa, [p[0] for p in pasos], pasos, pf, pv, _tasas(conn, divisa))
+        )
         dias.update(pf)
         if pf:  # el día de cada operación sale aunque ese día aún no haya precio
             dias.update(p[0] for p in pasos)
         if inicio is None or pasos[0][0] < inicio:
             inicio = pasos[0][0]
+    return posiciones, inicio, dias
+
+
+def serie(
+    conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
+) -> list[dict]:
+    """Una fila por día: {"fecha", "invertido", "valor", "ganancia", "rentabilidad"} en euros
+    (rentabilidad en tanto por uno, None si no había nada invertido). Con grupo_id solo cuenta
+    ese grupo y con instrumento_id solo ese instrumento (se pueden combinar). Sin operaciones o
+    sin precios, devuelve una lista vacía."""
+    posiciones, inicio, dias = _posiciones(conn, grupo_id, instrumento_id)
     if inicio is None:
         return []
     dias = sorted(d for d in dias if d >= inicio)
     resultado = []
     for dia in dias:
         invertido = valor = Decimal(0)
-        for divisa, fechas_op, pasos, pf, pv, tasas in posiciones:
+        for _, _, fechas_op, pasos, pf, pv, tasas in posiciones:
             i = bisect_right(fechas_op, dia)
             if not i:
                 continue
@@ -105,6 +116,74 @@ def serie(
         resultado.append(
             {
                 "fecha": dia,
+                "invertido": invertido,
+                "valor": valor,
+                "ganancia": valor - invertido,
+                "rentabilidad": (valor - invertido) / invertido if invertido else None,
+            }
+        )
+    return resultado
+
+
+def serie_intradia(
+    conn: sqlite3.Connection,
+    grupo_id: int | None = None,
+    instrumento_id: int | None = None,
+    horas: int = 24,
+) -> list[dict]:
+    """El último día de la cartera con los ticks de ETFs, acciones y cripto (`precios_mercado`).
+
+    La ventana son las `horas` anteriores al último tick (no al reloj: con la bolsa cerrada se
+    ve la última sesión). Devuelve la primera fila con el estado al empezar la ventana y después
+    una por cada instante con algún tick: {"fecha" (datetime UTC), "invertido", "valor",
+    "ganancia", "rentabilidad"}, como `serie` pero en euros al cambio del día. En cada instante
+    cada instrumento vale su último tick; lo que no tiene ticks (fondos, planes) vale su último
+    precio diario. Sin ticks de lo elegido, devuelve una lista vacía.
+    """
+    posiciones, _, _ = _posiciones(conn, grupo_id, instrumento_id)
+    ticks = {}  # instrumento_id -> (momentos ISO, precios)
+    for pos in posiciones:
+        inst_id = pos[0]
+        if inst_id in ticks:
+            continue
+        filas = conn.execute(
+            "SELECT momento, precio FROM precios_mercado WHERE instrumento_id = ? ORDER BY momento",
+            (inst_id,),
+        ).fetchall()
+        if filas:
+            ticks[inst_id] = ([f[0] for f in filas], [Decimal(f[1]) for f in filas])
+    if not ticks:
+        return []
+    fin = max(m[-1] for m, _ in ticks.values())
+    fecha_fin = datetime.strptime(fin, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    inicio = (fecha_fin - timedelta(hours=horas)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    instantes = sorted({m for ms, _ in ticks.values() for m in ms if inicio < m <= fin})
+    resultado = []
+    for momento in [inicio, *instantes]:
+        dt = datetime.strptime(momento, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        dia = dt.date()
+        invertido = valor = Decimal(0)
+        for inst_id, _, fechas_op, pasos, pf, pv, tasas in posiciones:
+            i = bisect_right(fechas_op, dia)
+            if not i:
+                continue
+            _, participaciones, coste = pasos[i - 1]
+            if participaciones == 0:
+                continue
+            precio = None
+            if inst_id in ticks:
+                momentos, precios = ticks[inst_id]
+                j = bisect_right(momentos, momento)
+                precio = precios[j - 1] if j else None
+            if precio is None:
+                precio = _hasta(pf, pv, dia)
+            valor_pos = coste if precio is None else participaciones * precio
+            tasa = Decimal(1) if tasas is None else _hasta(tasas[0], tasas[1], dia) or tasas[1][0]
+            invertido += coste * tasa
+            valor += valor_pos * tasa
+        resultado.append(
+            {
+                "fecha": dt,
                 "invertido": invertido,
                 "valor": valor,
                 "ganancia": valor - invertido,

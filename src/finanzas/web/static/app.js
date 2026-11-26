@@ -1,6 +1,6 @@
 "use strict";
 
-const ETIQUETAS_PERIODO = { "1S": "1S", "1M": "1M", "1A": "1A", YTD: "YTD", MAX: "Máx" };
+const ETIQUETAS_PERIODO = { "1D": "Día", "1S": "1S", "1M": "1M", "1A": "1A", YTD: "YTD", MAX: "Máx" };
 
 const estado = { periodo: "1M", vista: "valor", grupo: "todos", instrumento: "todos", tema: "auto" };
 const TEMAS = { auto: ["◐", "Tema: automático"], claro: ["☀", "Tema: claro"], oscuro: ["☾", "Tema: oscuro"] };
@@ -15,6 +15,10 @@ const eurosFino = new Intl.NumberFormat("es-ES", { style: "currency", currency: 
 const pct = new Intl.NumberFormat("es-ES", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1, signDisplay: "exceptZero" });
 const fechaCorta = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" });
 const fechaLarga = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" });
+
+const fechaHora = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const soloHora = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" });
+const esDia = () => ultimosDatos && ultimosDatos.periodo === "1D"; // la serie trae instantes (UTC), no días
 
 const aFecha = (iso) => new Date(iso + "T00:00:00");
 const css = (nombre) => getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
@@ -86,7 +90,10 @@ function pintarTarjetas(r) {
   pr.hidden = !pc;
   if (pc) {
     const div = new Intl.NumberFormat("es-ES", { style: "currency", currency: pc.divisa, maximumFractionDigits: 4 });
-    pr.textContent = `Participación: ${div.format(pc.valor)} (${aFecha(pc.fecha).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })})`;
+    const cuando = esDia()
+      ? fechaHora.format(new Date(pc.fecha))
+      : aFecha(pc.fecha).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+    pr.textContent = `Participación: ${div.format(pc.valor)} (${cuando})`;
   }
   $("t-invertido").textContent = res ? `Invertido ${euros.format(res.invertido)}` : "";
   const g = $("t-ganancia"), p = $("t-rentab");
@@ -94,7 +101,9 @@ function pintarTarjetas(r) {
   p.textContent = res && res.rentabilidad !== null ? pct.format(res.rentabilidad) : "–";
   g.className = res ? signo(res.ganancia) : "";
   p.className = res && res.rentabilidad !== null ? signo(res.rentabilidad) : "";
-  $("rango").textContent = r && r.desde ? `${fechaLarga.format(aFecha(r.desde))} – ${fechaLarga.format(aFecha(r.hasta))}` : "";
+  $("rango").textContent = !r || !r.desde ? ""
+    : esDia() ? `${fechaHora.format(new Date(r.desde))} – ${fechaHora.format(new Date(r.hasta))}`
+    : `${fechaLarga.format(aFecha(r.desde))} – ${fechaLarga.format(aFecha(r.hasta))}`;
 }
 
 // Configuración de Chart.js para los datos actuales (null si no hay nada que dibujar).
@@ -157,7 +166,7 @@ function configuracion() {
         legend: { display: true, labels: { color: css("--suave"), boxWidth: 14, usePointStyle: true } },
         tooltip: {
           callbacks: {
-            title: (items) => fechaLarga.format(aFecha(items[0].label)),
+            title: (items) => (esDia() ? fechaHora.format(new Date(items[0].label)) : fechaLarga.format(aFecha(items[0].label))),
             label: formatoTooltip,
             afterBody: (items) => {
               const p = r.puntos[items[0].dataIndex];
@@ -167,7 +176,7 @@ function configuracion() {
         },
       },
       scales: {
-        x: { ticks: { ...eje, maxTicksLimit: 5, maxRotation: 0, callback: function (v) { return fechaCorta.format(aFecha(this.getLabelForValue(v))); } }, grid: { display: false } },
+        x: { ticks: { ...eje, maxTicksLimit: 5, maxRotation: 0, callback: function (v) { const l = this.getLabelForValue(v); return esDia() ? soloHora.format(new Date(l)) : fechaCorta.format(aFecha(l)); } }, grid: { display: false } },
         y: { ticks: { ...eje, maxTicksLimit: 6, callback: formatoY }, grid: { color: css("--rejilla") } },
       },
     },
@@ -220,7 +229,7 @@ async function cargar(enSilencio = false) {
   if (error && enSilencio) return; // en silencio, un fallo no borra lo que ya se ve
   if (enSilencio && JSON.stringify(datos) === JSON.stringify(ultimosDatos)) return; // nada nuevo: no se redibuja
   ultimosDatos = datos;
-  mostrarMensaje(error ? "No se pudo cargar: " + error.message : datos.puntos.length ? "" : "Sin datos en este periodo");
+  mostrarMensaje(error ? "No se pudo cargar: " + error.message : datos.puntos.length ? "" : datos.periodo === "1D" ? "Sin precios de hoy (solo ETFs, acciones y cripto tienen precio durante el día)" : "Sin datos en este periodo");
   pintarTarjetas(ultimosDatos);
   if (enSilencio) actualizarGrafico(); else pintarGrafico();
 }

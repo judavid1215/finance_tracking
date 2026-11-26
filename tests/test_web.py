@@ -34,7 +34,7 @@ def test_opciones_solo_instrumentos_con_operaciones(cliente):
     personal = next(g["id"] for g in o["grupos"] if g["nombre"] == "Personal")
     assert sorted(o["instrumentos"][0]["grupos"]) == sorted([pension, personal])
     assert {g["nombre"] for g in o["grupos"]} == {"Personal", "Pension"}
-    assert o["periodos"] == ["1S", "1M", "1A", "YTD", "MAX"]
+    assert o["periodos"] == ["1D", "1S", "1M", "1A", "YTD", "MAX"]
 
 
 def test_evolucion_total_y_por_grupo(cliente):

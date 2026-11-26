@@ -5,6 +5,7 @@ La web solo lee la base de datos; los precios se actualizan desde aquí: al arra
 cada INTERVALO segundos mientras el servidor esté activo (histórico que falte + precio de ahora). También se actualiza justo después de importar un CSV.
 """
 
+import os
 import sys
 import threading
 import time
@@ -16,15 +17,16 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))  # para poder importar "f
 from finanzas import actualizacion, db  # noqa: E402
 from finanzas.web.app import crear_app  # noqa: E402
 
-RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
-INTERVALO = 120  # segundos entre actualizaciones
+# FINANZAS_DB permite arrancar con otra base (ej. una de prueba) sin tocar la tuya.
+RUTA_DB = Path(os.environ.get("FINANZAS_DB") or Path(__file__).parent / "data" / "finanzas.sqlite3")
+INTERVALO = 30  # segundos entre actualizaciones
 bloqueo = threading.Lock()  # una sola actualización a la vez (bucle e importación de CSV)
 ultima = {"hora": None}  # cuándo terminó la última actualización (ISO UTC); la lee la web
 
 
 def _errores(res: dict) -> list[str]:
     """Los fallos de una actualización, en texto (Yahoo puede fallar sin que sea grave)."""
-    malos = [f"{f['nombre']}: {f['mensaje']}" for f in res["historicos"] + res["ahora"]["filas"] if f["estado"] == "error"]
+    malos = [f"{f['nombre']}: {f['mensaje']}" for f in res["historicos"] + res["ahora"]["filas"] + res["ticks"] if f["estado"] == "error"]
     malos += [f"{f['divisa']}/EUR: {f['mensaje']}" for f in res["divisas"] + res["ahora"]["divisas"] if f["estado"] == "error"]
     return malos
 

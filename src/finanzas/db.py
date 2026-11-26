@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS precios (
     UNIQUE (instrumento_id, fecha)
 );
 
+-- Precio durante el día de ETFs, acciones y cripto (cotizan minuto a minuto). `momento` es UTC
+-- ('AAAA-MM-DDTHH:MM:SSZ'), la hora de la barra de Yahoo (no la del reloj local). Los ticks
+-- recientes se guardan tal cual; los de más de 48 h se compactan a uno por hora (ver mercado.py).
+CREATE TABLE IF NOT EXISTS precios_mercado (
+    instrumento_id  INTEGER NOT NULL REFERENCES instrumentos(id) ON DELETE CASCADE,
+    momento         TEXT NOT NULL CHECK (momento GLOB '????-??-??T??:??:??Z'),
+    precio          TEXT NOT NULL CHECK (CAST(precio AS REAL) > 0),
+    PRIMARY KEY (instrumento_id, momento)
+);
+
 -- Tipo de cambio a euros: cuántos EUR vale 1 unidad de la divisa en esa fecha (ej. USD 0.92).
 CREATE TABLE IF NOT EXISTS tipos_cambio (
     divisa  TEXT NOT NULL CHECK (length(divisa) = 3 AND divisa != 'EUR'),
@@ -107,6 +117,22 @@ JOIN instrumentos i ON i.id = v.instrumento_id
 JOIN grupos g ON g.id = v.grupo_id
 LEFT JOIN identificadores d ON d.instrumento_id = i.id AND d.tipo = 'ISIN'
 ORDER BY v.fecha, v.id;
+
+-- Ticks de ETFs, acciones y cripto: los más recientes primero. momento_utc es el guardado y
+-- hora_local el mismo instante en la hora de este ordenador.
+DROP VIEW IF EXISTS precios_mercado_detalle;
+CREATE VIEW precios_mercado_detalle AS
+SELECT i.nombre AS instrumento,
+       d.valor AS identificador,
+       i.tipo,
+       i.divisa,
+       strftime('%d-%m-%Y %H:%M:%S', p.momento) AS momento_utc,
+       strftime('%d-%m-%Y %H:%M:%S', p.momento, 'localtime') AS hora_local,
+       p.precio
+FROM precios_mercado p
+JOIN instrumentos i ON i.id = p.instrumento_id
+LEFT JOIN identificadores d ON d.instrumento_id = i.id
+ORDER BY i.nombre, p.momento DESC;
 
 DROP VIEW IF EXISTS identificadores_detalle;
 CREATE VIEW identificadores_detalle AS

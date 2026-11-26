@@ -36,7 +36,7 @@ def historico_falso(simbolo, desde, permitir_vacio=False):
 def test_precios_reales_fechas_de_mercado_y_sin_precio_actual(conn, monkeypatch):
     monkeypatch.setattr(yahoo, "leer_historico", historico_falso)
     rellenar_datos.rellenar(conn, random.Random(1), HOY)
-    assert len(instrumentos.listar(conn)) == 6
+    assert len(instrumentos.listar(conn)) == 5
     assert conn.execute("SELECT COUNT(*) FROM precios").fetchone()[0] == 0
     # cada compra y venta de un instrumento de Yahoo usa un precio y un día del histórico falso
     for inst in instrumentos.listar(conn):
@@ -69,12 +69,12 @@ def test_si_yahoo_falla_se_omite_sin_crear(conn, monkeypatch):
     monkeypatch.setattr(yahoo, "leer_historico", falla)
     rellenar_datos.rellenar(conn, random.Random(1), HOY)
     nombres = {i["nombre"] for i in instrumentos.listar(conn)}
-    assert "NVIDIA" not in nombres and len(nombres) == 5
+    assert "NVIDIA" not in nombres and len(nombres) == 4
     assert precios.ultimo(conn, instrumentos.listar(conn)[0]["id"]) is None
 
 
 def test_mes_sin_dia_de_mercado_cerrado_se_salta(conn, monkeypatch):
     monkeypatch.setattr(yahoo, "leer_historico", historico_falso)
     rellenar_datos.rellenar(conn, random.Random(1), date(2026, 11, 3))  # el día 5 aún no llegó
-    [msci] = [i for i in instrumentos.listar(conn) if i["nombre"] == "MSCI World"]
-    assert len(compras.listar(conn, msci["id"])) == 11
+    [sp500] = [i for i in instrumentos.listar(conn) if i["nombre"] == "S&P 500"]
+    assert len(compras.listar(conn, sp500["id"])) == 11

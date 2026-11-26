@@ -8,7 +8,7 @@ se guardan: su valor liquidativo es oficial, diario y Quefondos no da histórico
 import sqlite3
 from datetime import date
 
-from finanzas import cartera, divisas, instrumentos, quefondos, yahoo
+from finanzas import cartera, divisas, instrumentos, mercado, quefondos, yahoo
 
 # Un precio más viejo que esto se guarda igualmente, pero se marca como antiguo.
 # (Fin de semana largo = 4 días; los planes de pensiones llegan con un par de días de retraso.)
@@ -139,10 +139,13 @@ def descargar_historicos_divisas(conn: sqlite3.Connection) -> list[dict]:
 def refrescar(conn: sqlite3.Connection) -> dict:
     """Deja la base al día para la web: baja el histórico que falte (hasta ayer) y guarda el
     precio y el tipo de cambio de ahora (el día de hoy, que se sustituye en cada llamada y se
-    cierra con el histórico del día siguiente). Devuelve {"historicos", "divisas", "ahora"}
-    con los resultados de cada paso."""
+    cierra con el histórico del día siguiente). También guarda el tick de ahora de ETFs,
+    acciones y cripto y compacta los ticks viejos a uno por hora (ver mercado.py).
+    Devuelve {"historicos", "divisas", "ahora", "ticks"} con los resultados de cada paso."""
     return {
         "historicos": descargar_historicos(conn),
         "divisas": descargar_historicos_divisas(conn),
         "ahora": consultar_todos(conn, guardar=True),
+        "ticks": mercado.registrar_ticks(conn),
+        "compactados": mercado.compactar(conn),
     }

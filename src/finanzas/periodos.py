@@ -1,4 +1,5 @@
-"""Recorta una serie diaria (evolucion.serie) a un periodo: 1S, 1M, 1A, YTD o Max.
+"""Recorta una serie diaria (evolucion.serie) a un periodo: 1S, 1M, 1A, YTD o Max, y una
+serie intradía (evolucion.serie_intradia) al día (1D).
 
 Para cada día del periodo se calcula la ganancia *dentro del periodo*: la ganancia de ese día
 menos la que había justo antes de empezar (la del último día con datos hasta la fecha de
@@ -14,7 +15,8 @@ from bisect import bisect_left
 from datetime import date, timedelta
 from decimal import Decimal
 
-PERIODOS = ("1S", "1M", "1A", "YTD", "MAX")
+PERIODOS = ("1D", "1S", "1M", "1A", "YTD", "MAX")
+INTRADIA = "1D"  # el único periodo que se calcula con ticks y no con días
 
 
 def _restar(dia: date, anios: int = 0, meses: int = 0) -> date:
@@ -30,6 +32,8 @@ def inicio(periodo: str, hoy: date) -> date | None:
     """Fecha justo antes de empezar el periodo (el periodo cubre los días posteriores), o None
     para el máximo. Lanza ValueError con un periodo desconocido."""
     periodo = periodo.upper()
+    if periodo == INTRADIA:
+        return hoy - timedelta(days=1)  # solo para validar: el día usa una ventana de ticks
     if periodo == "1S":
         return hoy - timedelta(days=7)
     if periodo == "1M":
@@ -41,6 +45,29 @@ def inicio(periodo: str, hoy: date) -> date | None:
     if periodo == "MAX":
         return None
     raise ValueError(f"Periodo desconocido: {periodo!r} (usa {', '.join(PERIODOS)})")
+
+
+def _puntos(base: dict | None, dentro: list[dict]) -> list[dict]:
+    """Los puntos de `dentro` con la ganancia y la rentabilidad medidas desde `base` (la última
+    fila antes de empezar; None si la cartera todavía no existía)."""
+    cero = Decimal(0)
+    ganancia_base = base["ganancia"] if base else cero
+    valor_base = base["valor"] if base else cero
+    invertido_base = base["invertido"] if base else cero
+    puntos = []
+    for f in dentro:
+        ganancia = f["ganancia"] - ganancia_base
+        capital = valor_base + max(f["invertido"] - invertido_base, cero)
+        puntos.append(
+            {
+                "fecha": f["fecha"],
+                "invertido": f["invertido"],
+                "valor": f["valor"],
+                "ganancia": ganancia,
+                "rentabilidad": ganancia / capital if capital else None,
+            }
+        )
+    return puntos
 
 
 def recortar(
@@ -67,23 +94,8 @@ def recortar(
             base = f
         else:
             dentro.append(f)
+    puntos = _puntos(base, dentro)
     cero = Decimal(0)
-    ganancia_base = base["ganancia"] if base else cero
-    valor_base = base["valor"] if base else cero
-    invertido_base = base["invertido"] if base else cero
-    puntos = []
-    for f in dentro:
-        ganancia = f["ganancia"] - ganancia_base
-        capital = valor_base + max(f["invertido"] - invertido_base, cero)
-        puntos.append(
-            {
-                "fecha": f["fecha"],
-                "invertido": f["invertido"],
-                "valor": f["valor"],
-                "ganancia": ganancia,
-                "rentabilidad": ganancia / capital if capital else None,
-            }
-        )
     ultimo = puntos[-1] if puntos else None
     fechas = [p["fecha"] for p in puntos]
     por_dia: dict[date, dict] = {}
@@ -105,4 +117,22 @@ def recortar(
         "resumen": ultimo
         and {k: ultimo[k] for k in ("valor", "invertido", "ganancia", "rentabilidad")},
         "aportaciones": list(por_dia.values()),
+    }
+
+
+def recortar_dia(filas: list[dict]) -> dict:
+    """Como `recortar`, para evolucion.serie_intradia: la primera fila es el estado al empezar
+    la ventana (base) y el resto, los puntos del día, con "fecha" como datetime UTC. Las
+    ganancias y rentabilidades son las del día. Sin aportaciones marcadas (las compras tienen
+    fecha, no hora)."""
+    base, dentro = (filas[0], filas[1:]) if filas else (None, [])
+    puntos = _puntos(base, dentro)
+    ultimo = puntos[-1] if puntos else None
+    return {
+        "desde": puntos[0]["fecha"] if puntos else None,
+        "hasta": ultimo["fecha"] if ultimo else None,
+        "puntos": puntos,
+        "resumen": ultimo
+        and {k: ultimo[k] for k in ("valor", "invertido", "ganancia", "rentabilidad")},
+        "aportaciones": [],
     }

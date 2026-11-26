@@ -3,7 +3,17 @@ from decimal import Decimal
 
 import pytest
 
-from finanzas import actualizacion, compras, db, instrumentos, precios, quefondos, ventas, yahoo
+from finanzas import (
+    actualizacion,
+    compras,
+    db,
+    instrumentos,
+    mercado,
+    precios,
+    quefondos,
+    ventas,
+    yahoo,
+)
 
 HOY = date(2026, 11, 22)
 
@@ -134,6 +144,7 @@ def test_refrescar_guarda_el_precio_de_ahora(conn, monkeypatch):
     id_ = comprar(conn, "Bitcoin", "Cripto", "BTC-EUR")
     monkeypatch.setattr(yahoo, "descargar_historico", lambda c, i: (None, None, 0))
     falso_yahoo(monkeypatch)  # yahoo.consultar / actualizar de pega
+    monkeypatch.setattr(mercado, "leer_ultimas_barras", lambda simbolos: {})
     monkeypatch.setattr(
         yahoo, "actualizar", lambda c, i: (precios.anadir(c, i, date(2026, 11, 22), "50") or (date(2026, 11, 22), Decimal("50")))
     )

@@ -1,7 +1,9 @@
 """Rellena la base con compras y ventas de ejemplo: Bitcoin, MSCI World, S&P 500, NVIDIA, Apple
 y un plan de pensiones.
 
-Uso: python scripts/rellenar_datos.py
+Uso: python scripts/rellenar_datos.py [ruta_de_la_base]
+Sin ruta usa data/finanzas.sqlite3; para no mezclar datos de prueba con los tuyos, pasa otra
+(ej. data/demo.sqlite3) y arranca la web con la variable FINANZAS_DB apuntando a ella.
 Las fechas, las cantidades y las comisiones (0–1 %, en la divisa del instrumento) son
 inventadas, pero los precios son reales: cada operación se hace el primer día de mercado desde
 su fecha de ejemplo, al cierre que Yahoo tuvo ese día. Necesita conexión; si Yahoo falla con un
@@ -32,7 +34,6 @@ RUTA_DB = RAIZ / "data" / "finanzas.sqlite3"
 # plan, que no tiene histórico real), decimales de participaciones
 CARTERAS = [
     ("Bitcoin", "Cripto", "EUR", "BTC-EUR", Decimal("30000"), 8),
-    ("MSCI World", "ETF", "EUR", "IE00BYX5NX33", Decimal("85"), 4),
     ("S&P 500", "ETF", "EUR", "IE00B5BMR087", Decimal("110"), 4),
     ("NVIDIA", "Accion", "USD", "NVDA", Decimal("120"), 4),
     ("Apple", "Accion", "USD", "AAPL", Decimal("180"), 4),
@@ -125,10 +126,11 @@ def rellenar(conn, rng: random.Random, hoy: date | None = None) -> None:
 
 
 def main() -> None:
-    conn = db.conectar(RUTA_DB)
+    ruta = Path(sys.argv[1]) if len(sys.argv) > 1 else RUTA_DB
+    conn = db.conectar(ruta)
     rellenar(conn, random.Random())
     conn.close()
-    print(f"Hecho. Base de datos: {RUTA_DB}")
+    print(f"Hecho. Base de datos: {ruta}")
 
 
 if __name__ == "__main__":
