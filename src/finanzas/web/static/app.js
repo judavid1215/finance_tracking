@@ -81,6 +81,7 @@ function mostrarMensaje(texto) {
 function pintarTarjetas(r) {
   const res = r && r.resumen;
   $("t-valor").textContent = res ? euros.format(res.valor) : "–";
+  $("t-invertido").textContent = res ? `Invertido ${euros.format(res.invertido)}` : "";
   const g = $("t-ganancia"), p = $("t-rentab");
   g.textContent = res ? conSigno(res.ganancia) : "–";
   p.textContent = res && res.rentabilidad !== null ? pct.format(res.rentabilidad) : "–";

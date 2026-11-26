@@ -105,6 +105,7 @@ main {
 }
 .etiqueta { font-size: 12px; color: var(--suave); }
 .tarjeta strong { font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tarjeta .sub { font-size: 11px; color: var(--suave); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sube { color: var(--sube); }
 .baja { color: var(--baja); }
 
