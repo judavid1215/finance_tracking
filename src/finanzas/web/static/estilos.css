@@ -258,6 +258,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
 .modal h2 { margin: 0; font-size: 18px; }
 .modal p { margin: 0; }
 .nota { font-size: 13px; color: var(--suave); }
+.total-op { margin: 4px 0; padding: 8px 10px; border-radius: 8px; background: var(--borde, rgba(127,127,127,.12)); font-size: 14px; font-variant-numeric: tabular-nums; }
 .campo { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; font-size: 13px; color: var(--suave); }
 .campo input {
   height: 44px; padding: 0 10px; min-width: 0;

@@ -24,6 +24,7 @@
       instrumentos: g.instrumentos.map((x) => ({
         id: x.id,
         nombre: x.nombre,
+        divisa: x.divisa,
         ops: x.operaciones.map((o) => [
           o.tipo,
           fechaOp.format(new Date(o.fecha + "T00:00:00")).replace(/\./g, ""),
@@ -161,6 +162,7 @@
       $("op-fecha").value = new Date().toISOString().slice(0, 10);
       for (const c of ["op-part", "op-precio"]) $(c).value = "";
       $("op-comision").value = "0";
+      mostrarTotal();
     } else if (id === "d-instrumento") {
       $("ctx-instrumento").textContent = `Grupo: ${grupo().nombre}`;
     } else if (id === "d-csv") {
@@ -206,6 +208,27 @@
     $("barra-seleccion").hidden = n === 0;
     $("n-seleccion").textContent = plural(n, "seleccionada", "seleccionadas");
   });
+
+  // Importe de la operación mientras se escribe: participaciones × precio (± comisión), para que
+  // el usuario compruebe de un vistazo que los datos están bien. Solo es visual; el servidor recalcula.
+  const leer = (id) => {
+    const t = $(id).value.trim().replace(",", ".");
+    return t !== "" && Number.isFinite(Number(t)) ? Number(t) : null;
+  };
+  function mostrarTotal() {
+    const n = leer("op-part"), precio = leer("op-precio"), com = leer("op-comision") || 0;
+    const p = $("total-op");
+    p.hidden = n === null || precio === null;
+    if (p.hidden) return;
+    const venta = document.querySelector("[name=tipo-op]:checked").value === "venta";
+    const d = instrumento().divisa;
+    const total = n * precio + (venta ? -com : com);
+    p.textContent = `${numero.format(n)} × ${dinero(precio, d)} = ${dinero(n * precio, d)}` +
+      (com ? ` ${venta ? "−" : "+"} comisión ${dinero(com, d)} = ${dinero(total, d)}` : "") +
+      (venta ? " (cobrado)" : " (invertido)");
+  }
+  for (const id of ["op-part", "op-precio", "op-comision"]) $(id).addEventListener("input", mostrarTotal);
+  for (const r of document.querySelectorAll("[name=tipo-op]")) r.addEventListener("change", mostrarTotal);
 
   // Guardar una operación nueva. Si el servidor la rechaza, el diálogo sigue abierto con el motivo.
   $("guardar-op").addEventListener("click", async (e) => {
