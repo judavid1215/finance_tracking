@@ -80,8 +80,11 @@ Hay dos tipos de precio:
   guarda y se avisa.
 - **Quefondos** no tiene API: se lee el valor liquidativo de su página con una expresión
   regular. Si cambian la web, saldrá un error claro y habrá que ajustar `quefondos.py`.
-- **Morningstar** se descartó: su API es de pago (institucional) y las librerías no oficiales
-  necesitan Chrome con ventana. Finect no tiene API documentada.
+- **Morningstar** (`morningstar.py`): para fondos y ETF con ISIN se consulta también el
+  servicio público que usan sus fichas (sin clave) y se usa su precio si es de una fecha más
+  reciente que el de Yahoo, que a veces va un día retrasado. Si una de las dos fuentes falla,
+  se usa la otra. Es un servicio no documentado: si cambia, se sigue con Yahoo solo.
+  Finect no tiene API documentada.
 - Una cripto sin ticker no se actualiza sola: usa la opción 15 para ponérselo.
 
 No incluido todavía: cálculo de impuestos (en España las ventas se imputan por FIFO, se hará

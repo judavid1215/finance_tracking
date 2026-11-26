@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import yfinance as yf
 
-from finanzas import instrumentos, precios
+from finanzas import instrumentos, morningstar, precios
 
 TIPOS_ID = ("ISIN", "TICKER")
 
@@ -36,8 +36,9 @@ def leer_precio(simbolo: str) -> tuple[date, Decimal, str]:
 
 
 def consultar(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, Decimal]:
-    """Pregunta a Yahoo el precio de ahora de un fondo, ETF, acción o cripto, SIN guardarlo.
-    Devuelve (fecha, precio).
+    """Pregunta el precio de ahora de un fondo, ETF, acción o cripto, SIN guardarlo.
+    Devuelve (fecha, precio). Fondos y ETF (con ISIN) se consultan también en Morningstar y
+    se devuelve el dato más reciente de los dos; si una fuente falla se usa la otra.
 
     Lanza ValueError si no es de esos tipos o si Yahoo da el precio en otra divisa
     (p. ej. el ETF cotiza en USD en esa bolsa y tu instrumento está en EUR).
@@ -45,12 +46,28 @@ def consultar(conn: sqlite3.Connection, instrumento_id: int) -> tuple[date, Deci
     inst = instrumentos.obtener(conn, instrumento_id)
     if inst is None or inst["id_tipo"] not in TIPOS_ID:
         raise ValueError("Solo se actualiza un fondo, ETF, acción o cripto con identificador")
-    fecha, precio, divisa = leer_precio(simbolo(inst))
-    if divisa != inst["divisa"]:
+    try:
+        fecha, precio, divisa = leer_precio(simbolo(inst))
+        error = None
+    except (ValueError, OSError) as e:
+        fecha = precio = divisa = None
+        error = e
+    if error is None and divisa != inst["divisa"]:
         raise ValueError(
             f"Yahoo da {simbolo(inst)} en {divisa}, pero el instrumento está en "
             f"{inst['divisa']}; no se guarda"
         )
+    if inst["id_tipo"] == "ISIN":
+        # Morningstar suele publicar el valor liquidativo antes: gana si es más reciente.
+        try:
+            f_m, p_m, d_m = morningstar.leer_precio(inst["identificador"])
+        except (ValueError, OSError):
+            pass
+        else:
+            if d_m == inst["divisa"] and (fecha is None or f_m > fecha):
+                return f_m, p_m
+    if error is not None:
+        raise error
     return fecha, precio
 
 

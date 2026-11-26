@@ -234,3 +234,62 @@ def test_sin_ticker_yahoo_se_busca_por_el_identificador(conn, monkeypatch):
     id_ = instrumentos.anadir(conn, "DNB", "Fondo", "EUR", "LU0302296495")
     yahoo.consultar(conn, id_)
     assert pedidos == ["LU0302296495"]
+
+
+XML_MS = '<Security><LastPrice date="21-11-2026 00:00:00" currency="EUR" marketTimeZone="GMT">14.2<'
+
+
+def test_morningstar_leer_precio():
+    from finanzas import morningstar
+
+    assert morningstar.leer_precio("X", xml=XML_MS) == (date(2026, 11, 21), Decimal("14.2"), "EUR")
+    with pytest.raises(ValueError):
+        morningstar.leer_precio("X", xml="<Response/>")
+
+
+def test_gana_morningstar_si_es_mas_reciente(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeTicker)  # Yahoo: 20-11
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 11, 21), Decimal("14.2"), "EUR")
+    )
+    id_ = instrumentos.anadir(conn, "Fondo", "fondo", "EUR", "LU0996175948")
+    assert yahoo.actualizar(conn, id_) == (date(2026, 11, 21), Decimal("14.2"))
+    assert precios.ultimo(conn, id_) == Decimal("14.2")
+
+
+def test_gana_yahoo_si_morningstar_no_es_mas_reciente(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 11, 20), Decimal("1"), "EUR")
+    )
+    id_ = instrumentos.anadir(conn, "Fondo", "fondo", "EUR", "LU0996175948")
+    assert yahoo.consultar(conn, id_) == (date(2026, 11, 20), Decimal("13.9519"))
+
+
+def test_morningstar_en_otra_divisa_se_ignora(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 11, 25), Decimal("9"), "USD")
+    )
+    id_ = instrumentos.anadir(conn, "Fondo", "fondo", "EUR", "LU0996175948")
+    assert yahoo.consultar(conn, id_)[0] == date(2026, 11, 20)
+
+
+def test_si_yahoo_falla_sirve_morningstar(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: FakeTicker(s, vacio=True))
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 11, 21), Decimal("14.2"), "EUR")
+    )
+    id_ = instrumentos.anadir(conn, "Fondo", "fondo", "EUR", "LU0996175948")
+    assert yahoo.consultar(conn, id_) == (date(2026, 11, 21), Decimal("14.2"))
+
+
+def test_cripto_no_consulta_morningstar(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeTicker)
+
+    def no_debe_llamarse(isin):
+        raise AssertionError("Morningstar solo para ISIN")
+
+    monkeypatch.setattr(yahoo.morningstar, "leer_precio", no_debe_llamarse)
+    id_ = instrumentos.anadir(conn, "Bitcoin", "cripto", "EUR", "btc-eur")
+    assert yahoo.consultar(conn, id_)[0] == date(2026, 11, 20)
