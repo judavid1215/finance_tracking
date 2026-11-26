@@ -27,17 +27,20 @@
       <div class="tarjeta"><span class="etiqueta">Rentab.</span><strong id="t-rentab">–</strong></div>
     </section>
 
-    <p id="rango" class="rango"></p>
-    <p id="aviso" class="aviso" hidden></p>
+    <div class="info">
+      <p id="rango" class="rango"></p>
+      <p id="aviso" class="aviso" hidden></p>
+    </div>
 
     <div class="vista" role="tablist" aria-label="Vista del gráfico">
       <button role="tab" data-vista="valor" aria-selected="true">Valor</button>
       <button role="tab" data-vista="rentabilidad" aria-selected="false">Rentabilidad %</button>
     </div>
 
+    <p id="precio" class="precio" hidden></p>
+
     <div class="grafico">
       <canvas id="grafico"></canvas>
-      <p id="precio" class="precio" hidden></p>
       <p id="mensaje" class="mensaje" hidden></p>
     </div>
   </main>
