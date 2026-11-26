@@ -81,6 +81,13 @@ function mostrarMensaje(texto) {
 function pintarTarjetas(r) {
   const res = r && r.resumen;
   $("t-valor").textContent = res ? euros.format(res.valor) : "–";
+  // Con un instrumento elegido: su último precio y de qué día es (para compararlo con el banco).
+  const pr = $("precio"), pc = r && r.precio;
+  pr.hidden = !pc;
+  if (pc) {
+    const div = new Intl.NumberFormat("es-ES", { style: "currency", currency: pc.divisa, maximumFractionDigits: 4 });
+    pr.textContent = `Participación: ${div.format(pc.valor)} (${aFecha(pc.fecha).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })})`;
+  }
   $("t-invertido").textContent = res ? `Invertido ${euros.format(res.invertido)}` : "";
   const g = $("t-ganancia"), p = $("t-rentab");
   g.textContent = res ? conSigno(res.ganancia) : "–";
@@ -125,7 +132,7 @@ function configuracion() {
     ];
     formatoY = (v) => euros.format(v);
     formatoTooltip = (c) =>
-      c.dataset.label === "Compras" ? tooltipCompra(c) : `${c.dataset.label}: ${eurosFino.format(c.parsed.y)}`;
+      c.dataset.label === "Compras" ? tooltipCompra(c) : `${c.dataset.label}:${eurosFino.format(c.parsed.y)}`;
   } else {
     const sube = (r.resumen.rentabilidad || 0) >= 0;
     const color = css(sube ? "--sube" : "--baja");

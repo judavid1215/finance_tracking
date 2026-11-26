@@ -119,8 +119,24 @@ def crear_app(
             conn.close()
         r = periodos.recortar(filas, periodo, hoy(), compras)
         resumen = r["resumen"]
+        # Con un instrumento concreto: su último precio (para compararlo con el banco).
+        precio = None
+        if instrumento is not None and r["hasta"]:
+            conn = abrir()
+            try:
+                f = conn.execute(
+                    "SELECT p.fecha, p.precio, i.divisa FROM precios p "
+                    "JOIN instrumentos i ON i.id = p.instrumento_id "
+                    "WHERE p.instrumento_id = ? AND p.fecha <= ? ORDER BY p.fecha DESC LIMIT 1",
+                    (instrumento, r["hasta"].isoformat()),
+                ).fetchone()
+            finally:
+                conn.close()
+            if f:
+                precio = {"fecha": f[0], "valor": float(f[1]), "divisa": f[2]}
         return jsonify(
             {
+                "precio": precio,
                 "periodo": periodo.upper(),
                 "desde": r["desde"] and r["desde"].isoformat(),
                 "hasta": r["hasta"] and r["hasta"].isoformat(),
