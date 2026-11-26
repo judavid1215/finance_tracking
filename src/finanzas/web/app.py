@@ -6,12 +6,14 @@
 - GET /api/evolucion    ?periodo=1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
 - GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
+- POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
 - GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
 Las cantidades salen como números normales (float): son solo para dibujar el gráfico; los
 cálculos siguen haciéndose en Decimal.
 """
 
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -162,6 +164,51 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
                 x["operaciones"].sort(key=lambda o: (o["fecha"], o["id"]), reverse=True)
             grupos_.append({"id": g["id"], "nombre": g["nombre"], "instrumentos": instrumentos})
         return jsonify({"grupos": grupos_})
+
+    @app.post("/api/operaciones")
+    def crear_operacion():
+        """JSON: tipo (compra|venta), instrumento, grupo, fecha (AAAA-MM-DD), participaciones,
+        precio, comision (opcional). Los números van como texto para no perder precisión."""
+        d = request.get_json(silent=True) or {}
+        modulo = {"compra": compras, "venta": ventas}.get(d.get("tipo"))
+        if modulo is None:
+            abort(400, "tipo debe ser 'compra' o 'venta'")
+        try:
+            fecha = date.fromisoformat(str(d.get("fecha")))
+            instrumento, grupo = int(d.get("instrumento")), int(d.get("grupo"))
+        except (ValueError, TypeError):
+            abort(400, "fecha, instrumento o grupo no válidos")
+        conn = abrir()
+        try:
+            try:
+                id_ = modulo.anadir(
+                    conn, instrumento, fecha, d.get("participaciones"), d.get("precio"),
+                    d.get("comision") or 0, grupo_id=grupo,
+                )
+            except (ValueError, TypeError) as e:
+                abort(422, str(e))
+            except sqlite3.IntegrityError:
+                abort(422, "El instrumento o el grupo no existen")
+        finally:
+            conn.close()
+        return jsonify({"id": id_}), 201
+
+    @app.delete("/api/operaciones/<tipo>/<int:op_id>")
+    def borrar_operacion(tipo, op_id):
+        modulo = {"compra": compras, "venta": ventas}.get(tipo)
+        if modulo is None:
+            abort(404, "tipo desconocido")
+        conn = abrir()
+        try:
+            try:
+                existia = modulo.borrar(conn, op_id)
+            except ValueError as e:  # borrar la compra dejaría ventas sin cubrir
+                abort(422, str(e))
+        finally:
+            conn.close()
+        if not existia:
+            abort(404, "No existe esa operación")
+        return "", 204
 
     @app.get("/api/aportacion/<int:compra_id>")
     def datos_aportacion(compra_id):

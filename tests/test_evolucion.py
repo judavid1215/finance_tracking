@@ -35,6 +35,7 @@ def test_valor_por_dia_con_precio_arrastrado(conn):
     assert [(f["fecha"].day, f["invertido"], f["valor"]) for f in s] == [
         (1, Decimal("20"), Decimal("20")),
         (2, Decimal("20"), Decimal("24")),
+        (3, Decimal("40"), Decimal("36")),  # día de la compra, sin precio nuevo: vale el último (12)
         (4, Decimal("40"), Decimal("60")),
     ]
     assert s[-1]["rentabilidad"] == Decimal("0.5")

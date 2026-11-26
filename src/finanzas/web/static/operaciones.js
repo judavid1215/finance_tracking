@@ -1,7 +1,7 @@
 "use strict";
 // Pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones con los datos reales
-// (GET /api/operaciones, solo lectura). Los botones de escribir (añadir, borrar, mover, importar)
-// siguen siendo maqueta: abren su diálogo pero no guardan nada.
+// (GET /api/operaciones). Añadir y borrar operaciones guardan de verdad (POST/DELETE);
+// crear instrumento, mover e importar siguen siendo maqueta: abren su diálogo pero no guardan nada.
 (() => {
   const $ = (id) => document.getElementById(id);
 
@@ -35,6 +35,22 @@
         ]),
       })),
     }));
+  }
+
+  async function enviar(url, opciones) {
+    const r = await fetch(url, opciones);
+    if (!r.ok) throw new Error((await r.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || r.statusText);
+  }
+  async function recargar() {
+    DATOS = preparaDatos(await pedir("/api/operaciones"));
+    if (nav.g !== null && !DATOS[nav.g]) nav.g = nav.i = null;
+    else if (nav.i !== null && !DATOS[nav.g].instrumentos[nav.i]) nav.i = null;
+    pintar();
+    if (typeof refrescarGrafico === "function") await refrescarGrafico();
+  }
+  function error(id, texto) {
+    $(id).textContent = texto || "";
+    $(id).hidden = !texto;
   }
 
   const nav = { g: null, i: null }; // índices del grupo e instrumento abiertos (null = ese nivel no está abierto)
@@ -77,6 +93,8 @@
   function filaOperacion([tipo, fecha, part, importe, id, detalle]) {
     const li = document.createElement("li");
     li.className = "op";
+    li.dataset.tipo = tipo;
+    li.dataset.id = id;
     li.innerHTML =
       '<label class="check"><input type="checkbox" aria-label="Seleccionar"></label>' +
       '<div class="op-cuerpo"><div class="op-linea"><strong></strong><span class="op-importe"></span></div>' +
@@ -139,7 +157,10 @@
   function preparar(id) {
     if (id === "d-anadir") {
       $("ctx-anadir").textContent = `${instrumento().nombre} · ${grupo().nombre}`;
-      $("nota-venta").textContent = "Tienes 8,12 participaciones en este grupo.";
+      error("error-anadir", "");
+      $("op-fecha").value = new Date().toISOString().slice(0, 10);
+      for (const c of ["op-part", "op-precio"]) $(c).value = "";
+      $("op-comision").value = "0";
     } else if (id === "d-instrumento") {
       $("ctx-instrumento").textContent = `Grupo: ${grupo().nombre}`;
     } else if (id === "d-csv") {
@@ -154,6 +175,7 @@
       $("nota-mover").textContent = `Se moverán sus ${instrumento().ops.length} operaciones. Si el grupo destino ya tiene este instrumento, se sumarán a las suyas.`;
     } else if (id === "d-borrar") {
       const filas = [...document.querySelectorAll("#lista-ops input:checked")].map((c) => c.closest(".op").dataset.resumen);
+      error("error-borrar", "");
       $("lista-borrar").replaceChildren(...filas.map((t) => Object.assign(document.createElement("li"), { textContent: t })));
     }
   }
@@ -185,10 +207,48 @@
     $("n-seleccion").textContent = plural(n, "seleccionada", "seleccionadas");
   });
 
-  // Compra/venta: la nota de participaciones solo en ventas
-  for (const r of document.querySelectorAll("[name=tipo-op]")) {
-    r.addEventListener("change", () => { $("nota-venta").hidden = r.parentElement.textContent.trim() !== "Venta"; });
-  }
+  // Guardar una operación nueva. Si el servidor la rechaza, el diálogo sigue abierto con el motivo.
+  $("guardar-op").addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!$("d-anadir").querySelector("form").reportValidity()) return;
+    const cuerpo = {
+      tipo: document.querySelector("[name=tipo-op]:checked").value,
+      instrumento: instrumento().id,
+      grupo: grupo().id,
+      fecha: $("op-fecha").value,
+      participaciones: $("op-part").value,
+      precio: $("op-precio").value,
+      comision: $("op-comision").value || "0",
+    };
+    try {
+      await enviar("/api/operaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      });
+      $("d-anadir").close();
+      await recargar();
+    } catch (err) {
+      error("error-anadir", err.message);
+    }
+  });
+
+  // Borrar las operaciones marcadas, una a una; las que fallen se quedan y se avisa del motivo
+  $("confirmar-borrar").addEventListener("click", async (e) => {
+    e.preventDefault();
+    const marcadas = [...document.querySelectorAll("#lista-ops input:checked")].map((c) => c.closest(".op"));
+    const fallos = [];
+    for (const li of marcadas) {
+      try {
+        await enviar(`/api/operaciones/${li.dataset.tipo}/${li.dataset.id}`, { method: "DELETE" });
+      } catch (err) {
+        fallos.push(`${li.dataset.resumen}: ${err.message}`);
+      }
+    }
+    await recargar();
+    if (fallos.length) error("error-borrar", fallos.join(" · "));
+    else $("d-borrar").close();
+  });
 
   // Asistente CSV de tres pasos
   let paso = 1;

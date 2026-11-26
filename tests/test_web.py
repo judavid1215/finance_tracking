@@ -99,3 +99,52 @@ def test_estado_sin_actualizaciones(cliente):
 def test_estado_con_hora(tmp_path):
     app = crear_app(tmp_path / "t.sqlite3", actualizado=lambda: "2026-01-10T14:32:00+00:00")
     assert app.test_client().get("/api/estado").get_json() == {"actualizado": "2026-01-10T14:32:00+00:00"}
+
+
+def _ids(cliente):
+    arbol = cliente.get("/api/operaciones").get_json()["grupos"]
+    personal = next(g for g in arbol if g["nombre"] == "Personal")
+    return personal["id"], personal["instrumentos"][0]["id"]
+
+
+def test_anadir_y_borrar_compra(cliente):
+    grupo, inst = _ids(cliente)
+    cuerpo = {"tipo": "compra", "instrumento": inst, "grupo": grupo, "fecha": "2026-01-08",
+              "participaciones": "1,5", "precio": "11.5", "comision": "0.25"}
+    r = cliente.post("/api/operaciones", json=cuerpo)
+    assert r.status_code == 201
+    nuevo = r.get_json()["id"]
+
+    def ops():
+        arbol = cliente.get("/api/operaciones").get_json()["grupos"]
+        return next(g for g in arbol if g["id"] == grupo)["instrumentos"][0]["operaciones"]
+
+    op = next(o for o in ops() if o["id"] == nuevo and o["tipo"] == "compra")
+    assert op["participaciones"] == 1.5 and op["comision"] == 0.25
+    assert cliente.delete(f"/api/operaciones/compra/{nuevo}").status_code == 204
+    assert all(not (o["id"] == nuevo and o["tipo"] == "compra") for o in ops())
+    assert cliente.delete(f"/api/operaciones/compra/{nuevo}").status_code == 404
+
+
+def test_venta_y_errores_al_escribir(cliente):
+    grupo, inst = _ids(cliente)
+    base = {"tipo": "venta", "instrumento": inst, "grupo": grupo, "fecha": "2026-01-09", "precio": "12"}
+    assert cliente.post("/api/operaciones", json={**base, "participaciones": "100"}).status_code == 422
+    ok = cliente.post("/api/operaciones", json={**base, "participaciones": "1"})
+    assert ok.status_code == 201
+    assert cliente.post("/api/operaciones", json={**base, "tipo": "x"}).status_code == 400
+    assert cliente.post("/api/operaciones", json={**base, "fecha": "hoy"}).status_code == 400
+    assert cliente.post("/api/operaciones", json={**base, "participaciones": "-1"}).status_code == 422
+    assert cliente.post("/api/operaciones", json={**base, "participaciones": "1", "instrumento": 999}).status_code == 422
+    assert cliente.delete(f"/api/operaciones/venta/{ok.get_json()['id']}").status_code == 204
+
+
+def test_borrar_compra_que_deja_venta_sin_cubrir(cliente):
+    grupo, inst = _ids(cliente)
+    v = {"tipo": "venta", "instrumento": inst, "grupo": grupo, "fecha": "2026-01-09",
+         "participaciones": "2", "precio": "12"}
+    assert cliente.post("/api/operaciones", json=v).status_code == 201
+    compra = next(o for o in cliente.get("/api/operaciones").get_json()["grupos"]
+                  if o["id"] == grupo)["instrumentos"][0]["operaciones"]
+    id_compra = next(o["id"] for o in compra if o["tipo"] == "compra")
+    assert cliente.delete(f"/api/operaciones/compra/{id_compra}").status_code == 422

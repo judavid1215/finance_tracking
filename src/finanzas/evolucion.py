@@ -2,7 +2,8 @@
 
 Cada día lleva, por instrumento y grupo, la posición de ese día (coste medio, ver posicion.py)
 y el último precio guardado hasta ese día (si un día no cotiza, vale el precio anterior). Los
-días de la serie son los días con precio de algún instrumento, desde la primera operación.
+días de la serie son los días con precio de algún instrumento y los días de operación, desde la
+primera operación.
 
 - Si un instrumento todavía no tiene precio en esa fecha (p. ej. se compró en festivo y su
   primer precio llega unos días después), vale lo que costó: ni gana ni pierde.
@@ -76,6 +77,8 @@ def serie(
         )
         posiciones.append((divisa, [p[0] for p in pasos], pasos, pf, pv, _tasas(conn, divisa)))
         dias.update(pf)
+        if pf:  # el día de cada operación sale aunque ese día aún no haya precio
+            dias.update(p[0] for p in pasos)
         if inicio is None or pasos[0][0] < inicio:
             inicio = pasos[0][0]
     if inicio is None:

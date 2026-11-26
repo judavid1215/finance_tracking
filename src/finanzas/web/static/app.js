@@ -217,6 +217,19 @@ async function cargar(enSilencio = false) {
   if (enSilencio) actualizarGrafico(); else pintarGrafico();
 }
 
+// Tras añadir o borrar operaciones: vuelve a pedir las opciones (puede haber instrumentos nuevos)
+// y redibuja la gráfica con los datos nuevos.
+async function refrescarGrafico() {
+  try {
+    const o = await pedir("/api/opciones");
+    todosInstrumentos = o.instrumentos;
+    rellenarSelect($("grupo"), o.grupos, "Todos los grupos", estado.grupo);
+    estado.grupo = $("grupo").value;
+    rellenarInstrumentos();
+  } catch (e) { /* si falla, se redibuja con las opciones que ya había */ }
+  await cargar();
+}
+
 function marcarVista() {
   for (const b of document.querySelectorAll(".vista button")) b.setAttribute("aria-selected", String(b.dataset.vista === estado.vista));
 }

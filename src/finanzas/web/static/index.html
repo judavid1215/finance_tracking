@@ -43,7 +43,7 @@
 
   <!-- ===== Operaciones: datos reales en solo lectura ===== -->
   <main id="s-operaciones" hidden>
-    <p class="aviso-diseno">Datos reales, solo lectura. Añadir, borrar, mover e importar aún son maqueta.</p>
+    <p class="aviso-diseno">Datos reales. Añadir y borrar compras y ventas funciona; crear instrumentos, mover e importar aún son maqueta.</p>
     <div id="migas" class="migas" role="navigation" aria-label="Ubicación"></div>
     <div id="acciones-ops" class="acciones"></div>
 
@@ -61,19 +61,19 @@
       <h2>Añadir operación</h2>
       <p class="contexto" id="ctx-anadir"></p>
       <div class="segmentado" role="group" aria-label="Tipo">
-        <label><input type="radio" name="tipo-op" checked> Compra</label>
-        <label><input type="radio" name="tipo-op"> Venta</label>
+        <label><input type="radio" name="tipo-op" value="compra" checked> Compra</label>
+        <label><input type="radio" name="tipo-op" value="venta"> Venta</label>
       </div>
-      <label class="campo">Fecha <input type="date"></label>
+      <label class="campo">Fecha <input type="date" id="op-fecha" required></label>
       <div class="fila">
-        <label class="campo">Participaciones <input type="text" inputmode="decimal"></label>
-        <label class="campo">Precio <input type="text" inputmode="decimal"></label>
+        <label class="campo">Participaciones <input type="text" inputmode="decimal" id="op-part" required></label>
+        <label class="campo">Precio <input type="text" inputmode="decimal" id="op-precio" required></label>
       </div>
-      <label class="campo">Comisión <input type="text" inputmode="decimal" value="0"></label>
-      <p class="nota" id="nota-venta" hidden></p>
+      <label class="campo">Comisión <input type="text" inputmode="decimal" value="0" id="op-comision"></label>
+      <p class="mensaje" id="error-anadir" hidden></p>
       <div class="pie">
         <button value="cancelar">Cancelar</button>
-        <button class="primario" value="ok">Guardar</button>
+        <button class="primario" value="ok" id="guardar-op">Guardar</button>
       </div>
     </form>
   </dialog>
@@ -128,9 +128,10 @@
       <p>Se borrarán de forma permanente:</p>
       <ul class="resumen" id="lista-borrar"></ul>
       <p class="nota">Esta acción no se puede deshacer.</p>
+      <p class="mensaje" id="error-borrar" hidden></p>
       <div class="pie">
         <button value="cancelar">Cancelar</button>
-        <button class="peligro-lleno" value="ok">Borrar</button>
+        <button class="peligro-lleno" value="ok" id="confirmar-borrar">Borrar</button>
       </div>
     </form>
   </dialog>
