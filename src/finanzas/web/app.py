@@ -7,6 +7,7 @@
                         (incluye las compras del periodo, para marcarlas en el gráfico)
 - GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
+  PUT /api/operaciones/<tipo>/<id>  edita fecha, participaciones, precio y comisión
 - GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
 Las cantidades salen como números normales (float): son solo para dibujar el gráfico; los
@@ -192,6 +193,32 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
         finally:
             conn.close()
         return jsonify({"id": id_}), 201
+
+    @app.put("/api/operaciones/<tipo>/<int:op_id>")
+    def editar_operacion(tipo, op_id):
+        """JSON: fecha, participaciones, precio, comision. El instrumento y el grupo no cambian."""
+        modulo = {"compra": compras, "venta": ventas}.get(tipo)
+        if modulo is None:
+            abort(404, "tipo desconocido")
+        d = request.get_json(silent=True) or {}
+        try:
+            fecha = date.fromisoformat(str(d.get("fecha")))
+        except ValueError:
+            abort(400, "fecha no válida")
+        conn = abrir()
+        try:
+            try:
+                existia = modulo.editar(
+                    conn, op_id, fecha, d.get("participaciones"), d.get("precio"),
+                    d.get("comision") or 0,
+                )
+            except (ValueError, TypeError) as e:  # datos no válidos o ventas que quedarían sin cubrir
+                abort(422, str(e))
+        finally:
+            conn.close()
+        if not existia:
+            abort(404, "No existe esa operación")
+        return "", 204
 
     @app.delete("/api/operaciones/<tipo>/<int:op_id>")
     def borrar_operacion(tipo, op_id):

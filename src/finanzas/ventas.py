@@ -1,4 +1,4 @@
-"""Añadir, borrar y consultar ventas. Participaciones y precio son siempre Decimal."""
+"""Añadir, editar, borrar y consultar ventas. Participaciones y precio son siempre Decimal."""
 
 import sqlite3
 from datetime import date
@@ -78,6 +78,41 @@ def borrar(conn: sqlite3.Connection, id: int) -> bool:
     cur = conn.execute("DELETE FROM ventas WHERE id = ?", (id,))
     conn.commit()
     return cur.rowcount == 1
+
+
+def editar(
+    conn: sqlite3.Connection, id: int, fecha: date, participaciones, precio, comision=0
+) -> bool:
+    """Cambia fecha, participaciones, precio y comisión de una venta (el instrumento y el grupo
+    no se tocan). Devuelve True si existía.
+
+    Lanza ValueError/TypeError si los datos no son válidos, y ValueError (sin guardar nada) si
+    el cambio dejaría alguna venta sin cubrir por las compras.
+    """
+    if not isinstance(fecha, date):
+        raise TypeError("fecha: usa datetime.date")
+    fila = conn.execute(
+        "SELECT instrumento_id, grupo_id FROM ventas WHERE id = ?", (id,)
+    ).fetchone()
+    if fila is None:
+        return False
+    conn.execute(
+        "UPDATE ventas SET fecha = ?, participaciones = ?, precio = ?, comision = ? WHERE id = ?",
+        (
+            fecha.isoformat(),
+            str(_decimal(participaciones, "participaciones")),
+            str(_decimal(precio, "precio")),
+            str(_decimal(comision, "comision", permitir_cero=True)),
+            id,
+        ),
+    )
+    try:
+        posicion.calcular(conn, fila["instrumento_id"], fila["grupo_id"])
+    except ValueError:
+        conn.rollback()
+        raise
+    conn.commit()
+    return True
 
 
 def listar(

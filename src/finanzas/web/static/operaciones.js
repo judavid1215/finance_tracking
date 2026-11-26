@@ -1,6 +1,6 @@
 "use strict";
 // Pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones con los datos reales
-// (GET /api/operaciones). Añadir y borrar operaciones guardan de verdad (POST/DELETE);
+// (GET /api/operaciones). Añadir, editar y borrar operaciones guardan de verdad (POST/PUT/DELETE);
 // crear instrumento, mover e importar siguen siendo maqueta: abren su diálogo pero no guardan nada.
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -33,6 +33,7 @@
           o.id,
           `${numero.format(o.participaciones)} part. a ${dinero(o.precio, x.divisa)}` +
             (o.comision ? ` · comisión ${dinero(o.comision, x.divisa)}` : ""),
+          o, // datos tal cual, para rellenar el diálogo de editar
         ]),
       })),
     }));
@@ -91,7 +92,7 @@
     return li;
   }
 
-  function filaOperacion([tipo, fecha, part, importe, id, detalle]) {
+  function filaOperacion([tipo, fecha, part, importe, id, detalle, datos]) {
     const li = document.createElement("li");
     li.className = "op";
     li.dataset.tipo = tipo;
@@ -103,6 +104,11 @@
     li.querySelector("strong").textContent = `${tipo === "compra" ? "Compra" : "Venta"} · ${fecha}`;
     li.querySelector(".op-importe").textContent = importe;
     li.querySelector(".op-detalle").textContent = detalle;
+    const e = boton("", { editar: `${tipo}:${id}` }, "icono");
+    e.setAttribute("aria-label", "Editar esta operación");
+    e.title = "Editar";
+    e.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+    li.append(e);
     if (tipo === "compra" && id) {
       const g = boton("", { aportacion: id }, "icono");
       g.setAttribute("aria-label", "Ver evolución de esta aportación");
@@ -157,6 +163,9 @@
   // Rellena el texto de contexto de cada diálogo según donde estés
   function preparar(id) {
     if (id === "d-anadir") {
+      editando = null;
+      $("titulo-anadir").textContent = "Añadir operación";
+      for (const r of document.querySelectorAll("[name=tipo-op]")) r.disabled = false;
       $("ctx-anadir").textContent = `${instrumento().nombre} · ${grupo().nombre}`;
       error("error-anadir", "");
       $("op-fecha").value = new Date().toISOString().slice(0, 10);
@@ -193,6 +202,29 @@
       window.dispatchEvent(new Event("resize")); // el gráfico se reajusta al volver
     });
   }
+
+  // Editar: el mismo diálogo de añadir, con los datos de la operación. El instrumento y el tipo no se cambian.
+  let editando = null; // {tipo, id} mientras el diálogo está en modo editar
+  function abrirEditar(tipo, id) {
+    const o = instrumento().ops.find((x) => x[0] === tipo && String(x[4]) === String(id))[6];
+    preparar("d-anadir");
+    editando = { tipo, id };
+    $("titulo-anadir").textContent = "Editar operación";
+    for (const r of document.querySelectorAll("[name=tipo-op]")) {
+      r.checked = r.value === tipo;
+      r.disabled = true;
+    }
+    $("op-fecha").value = o.fecha;
+    $("op-part").value = String(o.participaciones);
+    $("op-precio").value = String(o.precio);
+    $("op-comision").value = String(o.comision || 0);
+    mostrarTotal();
+    $("d-anadir").showModal();
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-editar]");
+    if (b) abrirEditar(...b.dataset.editar.split(":"));
+  });
 
   // Abrir diálogos (los botones de acciones se crean dinámicamente: delegación)
   document.addEventListener("click", (e) => {
@@ -235,17 +267,19 @@
     e.preventDefault();
     if (!$("d-anadir").querySelector("form").reportValidity()) return;
     const cuerpo = {
-      tipo: document.querySelector("[name=tipo-op]:checked").value,
-      instrumento: instrumento().id,
-      grupo: grupo().id,
+      ...(editando ? {} : {
+        tipo: document.querySelector("[name=tipo-op]:checked").value,
+        instrumento: instrumento().id,
+        grupo: grupo().id,
+      }),
       fecha: $("op-fecha").value,
       participaciones: $("op-part").value,
       precio: $("op-precio").value,
       comision: $("op-comision").value || "0",
     };
     try {
-      await enviar("/api/operaciones", {
-        method: "POST",
+      await enviar(editando ? `/api/operaciones/${editando.tipo}/${editando.id}` : "/api/operaciones", {
+        method: editando ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cuerpo),
       });

@@ -148,3 +148,41 @@ def test_borrar_compra_que_deja_venta_sin_cubrir(cliente):
                   if o["id"] == grupo)["instrumentos"][0]["operaciones"]
     id_compra = next(o["id"] for o in compra if o["tipo"] == "compra")
     assert cliente.delete(f"/api/operaciones/compra/{id_compra}").status_code == 422
+
+
+def _ops(cliente, grupo):
+    arbol = cliente.get("/api/operaciones").get_json()["grupos"]
+    return next(g for g in arbol if g["id"] == grupo)["instrumentos"][0]["operaciones"]
+
+
+def test_editar_compra(cliente):
+    grupo, _ = _ids(cliente)
+    compra = next(o for o in _ops(cliente, grupo) if o["tipo"] == "compra")
+    cuerpo = {"fecha": "2026-01-02", "participaciones": "3,5", "precio": "9.5", "comision": "1"}
+    assert cliente.put(f"/api/operaciones/compra/{compra['id']}", json=cuerpo).status_code == 204
+    nueva = next(o for o in _ops(cliente, grupo) if o["tipo"] == "compra")
+    assert (nueva["fecha"], nueva["participaciones"], nueva["precio"], nueva["comision"]) == (
+        "2026-01-02", 3.5, 9.5, 1.0)
+    assert cliente.put("/api/operaciones/compra/9999", json=cuerpo).status_code == 404
+    assert cliente.put(f"/api/operaciones/compra/{compra['id']}", json={**cuerpo, "precio": "0"}).status_code == 422
+    assert cliente.put(f"/api/operaciones/compra/{compra['id']}", json={**cuerpo, "fecha": "x"}).status_code == 400
+
+
+def test_editar_que_deja_venta_sin_cubrir(cliente):
+    grupo, inst = _ids(cliente)
+    v = {"tipo": "venta", "instrumento": inst, "grupo": grupo, "fecha": "2026-01-09",
+         "participaciones": "2", "precio": "12"}
+    id_venta = cliente.post("/api/operaciones", json=v).get_json()["id"]
+    compra = next(o for o in _ops(cliente, grupo) if o["tipo"] == "compra")
+    # bajar la compra a 1 participación dejaría la venta de 2 sin cubrir
+    r = cliente.put(f"/api/operaciones/compra/{compra['id']}",
+                    json={"fecha": "2026-01-01", "participaciones": "1", "precio": "10"})
+    assert r.status_code == 422
+    assert next(o for o in _ops(cliente, grupo) if o["tipo"] == "compra")["participaciones"] == 2.0
+    # y subir la venta por encima de lo comprado también se rechaza
+    r = cliente.put(f"/api/operaciones/venta/{id_venta}",
+                    json={"fecha": "2026-01-09", "participaciones": "5", "precio": "12"})
+    assert r.status_code == 422
+    ok = cliente.put(f"/api/operaciones/venta/{id_venta}",
+                     json={"fecha": "2026-01-09", "participaciones": "1", "precio": "13"})
+    assert ok.status_code == 204

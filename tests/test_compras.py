@@ -187,3 +187,15 @@ def test_vistas_se_actualizan_en_una_base_antigua(tmp_path):
     nueva = db.conectar(ruta)
     columnas = [c[1] for c in nueva.execute("PRAGMA table_info(compras_detalle)")]
     assert "isin" in columnas
+
+
+def test_editar_compra(conn):
+    id_ = instrumentos.anadir(conn, "X", "cripto", "EUR")
+    c = compras.anadir(conn, id_, date(2026, 1, 1), "2", "10")
+    assert compras.editar(conn, c, date(2026, 1, 3), "2,5", "11", "0.5")
+    (o,) = compras.listar(conn)
+    assert (o["fecha"], o["participaciones"], o["precio"], o["comision"]) == (
+        date(2026, 1, 3), Decimal("2.5"), Decimal("11"), Decimal("0.5"))
+    assert compras.editar(conn, 999, date(2026, 1, 3), "1", "1") is False
+    with pytest.raises(ValueError):
+        compras.editar(conn, c, date(2026, 1, 3), "0", "1")

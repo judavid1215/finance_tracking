@@ -155,3 +155,15 @@ def test_vista_ventas_detalle(conn, inst):
     ventas.anadir(conn, inst, date(2026, 3, 5), "1", "12")
     fila = conn.execute("SELECT * FROM ventas_detalle").fetchone()
     assert (fila["instrumento"], fila["fecha"]) == ("Bitcoin", "05-03-2026")
+
+
+def test_editar_venta(conn, inst):
+    compras.anadir(conn, inst, date(2026, 1, 1), "2", "100")
+    v = ventas.anadir(conn, inst, date(2026, 2, 1), "1", "150")
+    assert ventas.editar(conn, v, date(2026, 2, 5), "2", "160", "1")
+    (o,) = ventas.listar(conn)
+    assert (o["fecha"], o["participaciones"], o["precio"]) == (date(2026, 2, 5), Decimal("2"), Decimal("160"))
+    with pytest.raises(ValueError):  # más de lo comprado: no se guarda
+        ventas.editar(conn, v, date(2026, 2, 5), "3", "160")
+    assert ventas.listar(conn)[0]["participaciones"] == Decimal("2")
+    assert ventas.editar(conn, 999, date(2026, 2, 5), "1", "1") is False
