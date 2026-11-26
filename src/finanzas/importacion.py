@@ -101,6 +101,43 @@ def leer_csv(ruta: Path) -> tuple[list[dict], int]:
     return ordenes, ignoradas
 
 
+def previsualizar(conn, ruta: Path, grupo: str) -> dict:
+    """Lee un CSV sin pedir el ISIN ni la divisa (salen del fichero) y dice qué se importaría.
+
+    Devuelve isin, divisa, existente (nombre del instrumento si ya existe, o None), ya_importado
+    (si ya tiene compras en el grupo), compras (fecha, participaciones, precio), ignoradas e
+    invertido. No escribe nada. Lanza ValueError si el CSV está mal o mezcla ISIN o divisas.
+    """
+    try:
+        ordenes, ignoradas = leer_csv(Path(ruta))
+    except OSError as e:
+        raise ValueError(f"no se puede leer el fichero: {e.strerror}") from None
+    isines = sorted({o["isin"] for o in ordenes})
+    divisas = sorted({o["divisa"] for o in ordenes})
+    if len(isines) > 1 or len(divisas) > 1:
+        raise ValueError("el CSV debe tener un solo fondo y una sola divisa")
+    isin, divisa = normalizar_isin(isines[0]), divisas[0]
+    existente = next((i for i in instrumentos.listar(conn) if i["identificador"] == isin), None)
+    g = grupos.obtener_por_nombre(conn, grupo.strip())
+    ya = bool(existente and g and compras.listar(conn, existente["id"], g["id"]))
+    return {
+        "isin": isin,
+        "divisa": divisa,
+        "existente": existente["nombre"] if existente else None,
+        "ya_importado": ya,
+        "compras": sorted(
+            (
+                o["fecha"],
+                o["participaciones"].quantize(DECIMALES, ROUND_HALF_UP),
+                (o["importe"] / o["participaciones"]).quantize(DECIMALES, ROUND_HALF_UP),
+            )
+            for o in ordenes
+        ),
+        "ignoradas": ignoradas,
+        "invertido": sum(o["importe"] for o in ordenes),
+    }
+
+
 def preparar(
     ruta: Path,
     isin: str,

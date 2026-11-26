@@ -186,3 +186,68 @@ def test_editar_que_deja_venta_sin_cubrir(cliente):
     ok = cliente.put(f"/api/operaciones/venta/{id_venta}",
                      json={"fecha": "2026-01-09", "participaciones": "1", "precio": "13"})
     assert ok.status_code == 204
+
+
+CSV = (
+    "Fecha de la orden;ISIN;Importe estimado;Nº de participaciones;Estado\n"
+    "05/08/2026;IE00BYX5NX33;320 EUR;20;Finalizada\n"
+    "04/06/2026;IE00BYX5NX33;100 EUR;10,5;Finalizada\n"
+    "23/11/2026;IE00BYX5NX33;890 EUR;;En curso\n"
+)
+
+
+def _csv(texto=CSV, **campos):
+    import io
+
+    return {"archivo": (io.BytesIO(texto.encode("utf-8")), "ordenes.csv"), "grupo": "Pension", **campos}
+
+
+def test_importar_csv_vista_previa_e_importacion(cliente):
+    r = cliente.post("/api/importar/vista-previa", data=_csv())
+    assert r.status_code == 200
+    p = r.get_json()
+    assert (p["isin"], p["divisa"], p["existente"], p["ya_importado"], p["ignoradas"]) == (
+        "IE00BYX5NX33", "EUR", None, False, 1)
+    assert [c["fecha"] for c in p["compras"]] == ["2026-06-04", "2026-08-05"]
+    assert cliente.get("/api/operaciones").get_json()["grupos"][0]["instrumentos"][0]["nombre"] == "Fondo A"
+    assert len(cliente.get("/api/operaciones").get_json()["grupos"][0]["instrumentos"]) == 1  # no guardó nada
+
+    assert cliente.post("/api/importar", data=_csv()).status_code == 422  # falta el nombre
+    ok = cliente.post("/api/importar", data=_csv(nombre="Fidelity", ticker_yahoo="abc.f"))
+    assert ok.status_code == 201
+    pension = next(g for g in cliente.get("/api/operaciones").get_json()["grupos"] if g["nombre"] == "Pension")
+    nuevo = next(i for i in pension["instrumentos"] if i["nombre"] == "Fidelity")
+    assert len(nuevo["operaciones"]) == 2
+    # reimportar en el mismo grupo se rechaza; la vista previa lo avisa
+    assert cliente.post("/api/importar/vista-previa", data=_csv()).get_json()["ya_importado"] is True
+    assert cliente.post("/api/importar", data=_csv(nombre="Fidelity")).status_code == 422
+    # en otro grupo, el instrumento ya existe y se reutiliza (el nombre enviado se ignora)
+    otro = cliente.post("/api/importar", data=_csv(grupo="Nuevo", nombre="Otro"))
+    assert otro.status_code == 201 and "Fidelity" in otro.get_json()["resumen"]
+
+
+def test_importar_csv_errores(cliente):
+    assert cliente.post("/api/importar/vista-previa", data={"grupo": "Pension"}).status_code == 400
+    malo = CSV.replace("320 EUR", "320")
+    assert cliente.post("/api/importar/vista-previa", data=_csv(malo)).status_code == 422
+    mezcla = CSV.replace("04/06/2026;IE00BYX5NX33", "04/06/2026;IE000ZYRH0Q7")
+    assert cliente.post("/api/importar/vista-previa", data=_csv(mezcla)).status_code == 422
+
+
+def test_borrar_instrumento_entero(cliente):
+    grupo, inst = _ids(cliente)
+    assert cliente.delete(f"/api/instrumentos/{inst}").status_code == 204
+    assert all(i["id"] != inst for g in cliente.get("/api/operaciones").get_json()["grupos"]
+               for i in g["instrumentos"])
+    assert cliente.delete(f"/api/instrumentos/{inst}").status_code == 404
+
+
+def test_importar_csv_actualiza_precios_despues(tmp_path):
+    ruta = tmp_path / "t.sqlite3"
+    db.conectar(str(ruta)).close()
+    llamadas = []
+    c = crear_app(ruta, tras_importar=lambda: llamadas.append(1)).test_client()
+    assert c.post("/api/importar", data=_csv(nombre="X")).status_code == 201
+    assert llamadas == [1]
+    assert c.post("/api/importar", data=_csv(nombre="X")).status_code == 422  # ya importado
+    assert llamadas == [1]  # si falla no se actualiza

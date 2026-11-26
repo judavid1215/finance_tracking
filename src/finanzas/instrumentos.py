@@ -116,6 +116,22 @@ def borrar(conn: sqlite3.Connection, id: int) -> bool:
     return cur.rowcount == 1
 
 
+def borrar_con_operaciones(conn: sqlite3.Connection, id: int) -> bool:
+    """Borra el instrumento con todas sus compras y ventas (de todos los grupos) y sus precios.
+
+    Todo junto o nada. Devuelve True si existía. Es irreversible.
+    """
+    try:
+        conn.execute("DELETE FROM ventas WHERE instrumento_id = ?", (id,))
+        conn.execute("DELETE FROM compras WHERE instrumento_id = ?", (id,))
+        cur = conn.execute("DELETE FROM instrumentos WHERE id = ?", (id,))
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+    return cur.rowcount == 1
+
+
 def obtener(conn: sqlite3.Connection, id: int) -> sqlite3.Row | None:
     """Devuelve un instrumento por id (con id_tipo e identificador), o None."""
     return conn.execute(_SELECT + " WHERE i.id = ?", (id,)).fetchone()

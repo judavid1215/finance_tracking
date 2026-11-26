@@ -8,6 +8,9 @@
 - GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
   PUT /api/operaciones/<tipo>/<id>  edita fecha, participaciones, precio y comisión
+- DELETE /api/instrumentos/<id>  borra el instrumento con todas sus operaciones y precios
+- POST /api/importar/vista-previa  (multipart: archivo, grupo) lee un CSV de MyInvestor sin guardar
+  POST /api/importar  (multipart: archivo, grupo, nombre, ticker_yahoo) lo importa al grupo
 - GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
 Las cantidades salen como números normales (float): son solo para dibujar el gráfico; los
@@ -15,12 +18,22 @@ cálculos siguen haciéndose en Decimal.
 """
 
 import sqlite3
+import tempfile
 from datetime import date
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request
 
-from finanzas import aportacion, compras, db, evolucion, periodos, ventas
+from finanzas import (
+    aportacion,
+    compras,
+    db,
+    evolucion,
+    importacion,
+    instrumentos,
+    periodos,
+    ventas,
+)
 
 
 def _num(x):
@@ -37,9 +50,13 @@ def _entero(nombre: str) -> int | None:
         abort(400, f"'{nombre}' debe ser un número")
 
 
-def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> Flask:
+def crear_app(
+    ruta_db: str | Path, hoy=date.today, actualizado=lambda: None, tras_importar=lambda: None
+) -> Flask:
     """`hoy` es una función (para poder fijar la fecha en los tests). `actualizado` devuelve
-    cuándo se actualizaron los precios por última vez (texto ISO en UTC) o None si no se sabe."""
+    cuándo se actualizaron los precios por última vez (texto ISO en UTC) o None si no se sabe.
+    `tras_importar` se llama después de importar un CSV (sin argumentos, ya con los datos
+    guardados): el servidor lo usa para bajar enseguida el histórico y los precios del fondo."""
     app = Flask(__name__, static_folder="static", static_url_path="/static")
 
     def abrir():
@@ -235,6 +252,75 @@ def crear_app(ruta_db: str | Path, hoy=date.today, actualizado=lambda: None) -> 
             conn.close()
         if not existia:
             abort(404, "No existe esa operación")
+        return "", 204
+
+    def _csv_subido():
+        """El fichero CSV subido en el formulario (400 si no viene)."""
+        archivo = request.files.get("archivo")
+        if archivo is None or not archivo.filename:
+            abort(400, "falta el fichero CSV")
+        return archivo
+
+    @app.post("/api/importar/vista-previa")
+    def importar_vista_previa():
+        archivo, grupo = _csv_subido(), request.form.get("grupo", "")
+        conn = abrir()
+        try:
+            with tempfile.TemporaryDirectory() as carpeta:
+                ruta = Path(carpeta) / "ordenes.csv"
+                archivo.save(ruta)
+                try:
+                    p = importacion.previsualizar(conn, ruta, grupo)
+                except (ValueError, UnicodeDecodeError) as e:
+                    abort(422, str(e))
+        finally:
+            conn.close()
+        return jsonify(
+            {
+                "isin": p["isin"],
+                "divisa": p["divisa"],
+                "existente": p["existente"],
+                "ya_importado": p["ya_importado"],
+                "ignoradas": p["ignoradas"],
+                "invertido": _num(p["invertido"]),
+                "compras": [
+                    {"fecha": f.isoformat(), "participaciones": _num(n), "precio": _num(pr)}
+                    for f, n, pr in p["compras"]
+                ],
+            }
+        )
+
+    @app.post("/api/importar")
+    def importar_csv():
+        archivo, grupo = _csv_subido(), request.form.get("grupo", "")
+        nombre = request.form.get("nombre", "")
+        conn = abrir()
+        try:
+            with tempfile.TemporaryDirectory() as carpeta:
+                ruta = Path(carpeta) / "ordenes.csv"
+                archivo.save(ruta)
+                try:
+                    p = importacion.previsualizar(conn, ruta, grupo)  # ISIN y divisa, del fichero
+                    plan = importacion.importar(
+                        conn, ruta, p["isin"], p["existente"] or nombre, p["divisa"],
+                        request.form.get("ticker_yahoo"), grupo,
+                    )
+                except (ValueError, UnicodeDecodeError) as e:  # incluye FondoYaImportado
+                    abort(422, str(e))
+        finally:
+            conn.close()
+        tras_importar()  # sin precios no se puede dibujar nada: se bajan ya
+        return jsonify({"resumen": importacion.resumen(plan)}), 201
+
+    @app.delete("/api/instrumentos/<int:instrumento_id>")
+    def borrar_instrumento(instrumento_id):
+        conn = abrir()
+        try:
+            existia = instrumentos.borrar_con_operaciones(conn, instrumento_id)
+        finally:
+            conn.close()
+        if not existia:
+            abort(404, "No existe ese instrumento")
         return "", 204
 
     @app.get("/api/aportacion/<int:compra_id>")

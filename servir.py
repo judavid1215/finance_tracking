@@ -2,7 +2,7 @@
 
 Escucha en toda la red local (0.0.0.0): abre http://<ip-de-la-raspberry>:8000 desde el móvil.
 La web solo lee la base de datos; los precios se actualizan desde aquí: al arrancar y después
-cada INTERVALO segundos mientras el servidor esté activo (histórico que falte + precio de ahora).
+cada INTERVALO segundos mientras el servidor esté activo (histórico que falte + precio de ahora). También se actualiza justo después de importar un CSV.
 """
 
 import sys
@@ -18,6 +18,7 @@ from finanzas.web.app import crear_app  # noqa: E402
 
 RUTA_DB = Path(__file__).parent / "data" / "finanzas.sqlite3"
 INTERVALO = 120  # segundos entre actualizaciones
+bloqueo = threading.Lock()  # una sola actualización a la vez (bucle e importación de CSV)
 ultima = {"hora": None}  # cuándo terminó la última actualización (ISO UTC); la lee la web
 
 
@@ -32,11 +33,12 @@ def actualizar() -> None:
     """Una actualización completa con su propia conexión (SQLite no comparte conexiones entre
     hilos). Nunca lanza: si falla, lo cuenta y la web sigue con lo que ya hay."""
     try:
-        conn = db.conectar(RUTA_DB)
-        try:
-            res = actualizacion.refrescar(conn)
-        finally:
-            conn.close()
+        with bloqueo:
+            conn = db.conectar(RUTA_DB)
+            try:
+                res = actualizacion.refrescar(conn)
+            finally:
+                conn.close()
     except Exception as e:  # noqa: BLE001 - el hilo no debe morir por un fallo de red o de base
         print(f"[actualización] fallo: {e}")
         return
@@ -61,4 +63,4 @@ if __name__ == "__main__":
     print("Actualizando precios antes de arrancar (puede tardar)...")
     actualizar()
     threading.Thread(target=_bucle, args=(threading.Event(),), daemon=True).start()
-    crear_app(RUTA_DB, actualizado=lambda: ultima["hora"]).run(host="0.0.0.0", port=puerto)
+    crear_app(RUTA_DB, actualizado=lambda: ultima["hora"], tras_importar=actualizar).run(host="0.0.0.0", port=puerto)

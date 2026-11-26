@@ -1,7 +1,7 @@
 "use strict";
 // Pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones con los datos reales
 // (GET /api/operaciones). Añadir, editar y borrar operaciones guardan de verdad (POST/PUT/DELETE);
-// crear instrumento, mover e importar siguen siendo maqueta: abren su diálogo pero no guardan nada.
+// importar CSV también guarda; crear instrumento y mover siguen siendo maqueta: abren su diálogo pero no guardan nada.
 (() => {
   const $ = (id) => document.getElementById(id);
 
@@ -155,7 +155,7 @@
       if (!grupo().instrumentos.length) lista.append(vacio("Este grupo no tiene operaciones."));
       grupo().instrumentos.forEach((x, k) => lista.append(fila(x.nombre, plural(x.ops.length, "operación", "operaciones"), () => { nav.i = k; pintar(); })));
     } else {
-      acciones.append(boton("+ Añadir", { abrir: "d-anadir" }, "primario"), boton("Mover a otro grupo", { abrir: "d-mover" }));
+      acciones.append(boton("+ Añadir", { abrir: "d-anadir" }, "primario"), boton("Mover a otro grupo", { abrir: "d-mover" }), boton("Borrar instrumento", { borrarInstrumento: "1" }, "peligro"));
       instrumento().ops.forEach((o) => lista.append(filaOperacion(o)));
     }
   }
@@ -176,8 +176,9 @@
       $("ctx-instrumento").textContent = `Grupo: ${grupo().nombre}`;
     } else if (id === "d-csv") {
       $("ctx-csv").textContent = `Grupo: ${grupo().nombre}`;
-      $("resumen-csv").innerHTML = "Se añadirán <strong>14 compras</strong> al grupo <strong></strong>.";
-      $("resumen-csv").lastElementChild.textContent = grupo().nombre;
+      csv = null;
+      $("archivo-csv").value = "";
+      error("error-csv", "");
       paso = 1; mostrarPaso();
     } else if (id === "d-mover") {
       $("ctx-mover").textContent = `${instrumento().nombre} · ahora en ${grupo().nombre}`;
@@ -232,6 +233,20 @@
     if (!b) return;
     preparar(b.dataset.abrir);
     $(b.dataset.abrir).showModal();
+  });
+
+  // Borrar el instrumento entero (todas sus operaciones, en todos los grupos, y sus precios)
+  document.addEventListener("click", async (e) => {
+    if (!e.target.closest("[data-borrar-instrumento]")) return;
+    const x = instrumento();
+    if (!confirm(`¿Borrar «${x.nombre}» con todas sus operaciones (en todos los grupos) y su histórico de precios? No se puede deshacer.`)) return;
+    try {
+      await enviar(`/api/instrumentos/${x.id}`, { method: "DELETE" });
+      nav.i = null;
+      await recargar();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 
   // Selección múltiple de operaciones
@@ -307,16 +322,101 @@
     else $("d-borrar").close();
   });
 
-  // Asistente CSV de tres pasos
+  // Asistente CSV: 1) elegir fichero (el servidor lo lee sin guardar) 2) vista previa 3) confirmar
   let paso = 1;
+  let csv = null; // {archivo, previa} del fichero elegido
+  const nombreCsv = () => (csv.previa.existente || $("csv-nombre").value).trim();
   function mostrarPaso() {
     for (const s of document.querySelectorAll("#asistente [data-paso]")) s.hidden = Number(s.dataset.paso) !== paso;
     document.querySelectorAll(".pasos li").forEach((li, i) => li.classList.toggle("activo", i + 1 === paso));
     $("csv-atras").hidden = paso === 1;
     $("csv-sig").textContent = paso === 3 ? "Importar" : "Siguiente";
+    $("csv-sig").disabled = !csv || (paso === 2 && !nombreCsv());
   }
-  $("csv-sig").addEventListener("click", () => { if (paso < 3) { paso++; mostrarPaso(); } else $("d-csv").close(); });
-  $("csv-atras").addEventListener("click", () => { paso--; mostrarPaso(); });
+  // Los errores del servidor llegan como página HTML: se enseña solo el mensaje
+  async function subirCsv(url, cuerpo) {
+    const r = await fetch(url, { method: "POST", body: cuerpo });
+    if (r.ok) return r.json();
+    const html = new DOMParser().parseFromString(await r.text(), "text/html");
+    throw new Error(html.querySelector("p")?.textContent.trim() || r.statusText);
+  }
+  const formCsv = (extra) => {
+    const f = new FormData();
+    f.append("archivo", csv.archivo);
+    f.append("grupo", grupo().nombre);
+    for (const [k, v] of Object.entries(extra || {})) f.append(k, v);
+    return f;
+  };
+
+  async function elegirCsv(archivo) {
+    csv = null;
+    error("error-csv", "");
+    mostrarPaso();
+    try {
+      csv = { archivo };
+      csv.previa = await subirCsv("/api/importar/vista-previa", formCsv());
+      if (csv.previa.ya_importado) {
+        const nombre = csv.previa.existente;
+        csv = null;
+        throw new Error(`${nombre} ya tiene compras en el grupo ${grupo().nombre}; bórralas antes de reimportar.`);
+      }
+    } catch (err) {
+      csv = null;
+      error("error-csv", `${archivo.name}: ${err.message}`);
+      return;
+    }
+    const p = csv.previa;
+    $("csv-fondo").replaceChildren(
+      Object.assign(document.createElement("strong"), { textContent: p.isin }),
+      ` · ${p.existente ? p.existente + " (ya existe)" : "instrumento nuevo"} · ${p.divisa}`);
+    $("csv-nombre-campo").hidden = $("csv-ticker-campo").hidden = !!p.existente;
+    $("csv-nombre").value = $("csv-ticker").value = "";
+    $("csv-validas").textContent = plural(p.compras.length, "válida", "válidas");
+    $("csv-ignoradas").textContent = plural(p.ignoradas, "ignorada", "ignoradas");
+    const lineas = p.compras.slice(0, 4).map((c) => Object.assign(document.createElement("li"), {
+      textContent: `${fechaOp.format(new Date(c.fecha + "T00:00:00")).replace(/\./g, "")} · ${numero.format(c.participaciones)} part. a ${dinero(c.precio, p.divisa)}`,
+    }));
+    if (p.compras.length > 4) lineas.push(Object.assign(document.createElement("li"), { className: "nota", textContent: `… ${p.compras.length - 4} más` }));
+    $("csv-lista").replaceChildren(...lineas);
+    paso = 2;
+    mostrarPaso();
+  }
+
+  $("elegir-csv").addEventListener("click", () => $("archivo-csv").click());
+  $("archivo-csv").addEventListener("change", (e) => e.target.files[0] && elegirCsv(e.target.files[0]));
+  $("zona-csv").addEventListener("dragover", (e) => e.preventDefault());
+  $("zona-csv").addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files[0]) elegirCsv(e.dataTransfer.files[0]);
+  });
+  $("csv-nombre").addEventListener("input", mostrarPaso);
+
+  $("csv-sig").addEventListener("click", async () => {
+    error("error-csv", "");
+    if (paso === 2) {
+      const p = csv.previa;
+      $("resumen-csv").replaceChildren(
+        `Se añadirán ${plural(p.compras.length, "compra", "compras")} de `,
+        Object.assign(document.createElement("strong"), { textContent: nombreCsv() }),
+        ` (${dinero(p.invertido, p.divisa)} invertidos) al grupo `,
+        Object.assign(document.createElement("strong"), { textContent: grupo().nombre }), ".");
+      $("nota-csv").textContent = p.ignoradas ? `Las ${plural(p.ignoradas, "orden", "órdenes")} “En curso” o “Rechazada” se ignoran.` : "";
+      paso = 3;
+      return mostrarPaso();
+    }
+    $("csv-sig").disabled = true;
+    $("csv-sig").textContent = "Importando y bajando precios…";
+    try {
+      await subirCsv("/api/importar", formCsv({ nombre: nombreCsv(), ticker_yahoo: $("csv-ticker").value.trim() }));
+      $("d-csv").close();
+      await recargar();
+    } catch (err) {
+      error("error-csv", err.message);
+      $("csv-sig").disabled = false;
+      mostrarPaso();
+    }
+  });
+  $("csv-atras").addEventListener("click", () => { paso--; error("error-csv", ""); mostrarPaso(); });
 
   // Carga inicial: si el servidor no responde se avisa en la propia lista
   (async () => {

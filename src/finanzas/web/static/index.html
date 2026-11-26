@@ -43,7 +43,7 @@
 
   <!-- ===== Operaciones: datos reales en solo lectura ===== -->
   <main id="s-operaciones" hidden>
-    <p class="aviso-diseno">Datos reales. Añadir, editar y borrar compras y ventas funciona; crear instrumentos, mover e importar aún son maqueta.</p>
+    <p class="aviso-diseno">Datos reales. Añadir, editar y borrar compras y ventas funciona; importar CSV también; crear instrumentos y mover aún son maqueta.</p>
     <div id="migas" class="migas" role="navigation" aria-label="Ubicación"></div>
     <div id="acciones-ops" class="acciones"></div>
 
@@ -159,34 +159,32 @@
       </ol>
 
       <section data-paso="1">
-        <div class="zona-archivo">Arrastra aquí el CSV de órdenes<br><span class="nota">o</span><br><button type="button">Elegir fichero</button></div>
-        <p class="nota">El ISIN se lee del fichero.</p>
+        <div class="zona-archivo" id="zona-csv">Arrastra aquí el CSV de órdenes<br><span class="nota">o</span><br><button type="button" id="elegir-csv">Elegir fichero</button></div>
+        <input type="file" id="archivo-csv" accept=".csv,text/csv" hidden>
+        <p class="nota">El ISIN y la divisa se leen del fichero.</p>
       </section>
 
       <section data-paso="2" hidden>
-        <p><strong>IE00BYX5NX33</strong> · Fidelity MSCI World Index Fund (ya existe)</p>
+        <p id="csv-fondo"></p>
+        <label class="campo" id="csv-nombre-campo">Nombre del instrumento <input type="text" id="csv-nombre"></label>
+        <label class="campo" id="csv-ticker-campo">Ticker Yahoo <input type="text" id="csv-ticker" placeholder="opcional"></label>
         <div class="contadores">
-          <span class="etq compra">14 válidas</span>
-          <span class="etq neutra">2 ignoradas</span>
-          <span class="etq venta">0 errores</span>
+          <span class="etq compra" id="csv-validas"></span>
+          <span class="etq neutra" id="csv-ignoradas"></span>
         </div>
-        <ul class="resumen">
-          <li>14 oct 2025 · 0,65 part. a 153,94 €</li>
-          <li>14 nov 2025 · 0,66 part. a 151,52 €</li>
-          <li>14 dic 2025 · 0,64 part. a 156,25 €</li>
-          <li class="nota">… 11 más</li>
-        </ul>
+        <ul class="resumen" id="csv-lista"></ul>
       </section>
 
       <section data-paso="3" hidden>
         <p id="resumen-csv"></p>
-        <p class="nota">Las 2 órdenes “En curso” o “Rechazada” se ignoran.</p>
+        <p class="nota" id="nota-csv"></p>
       </section>
 
+      <p class="mensaje" id="error-csv" hidden></p>
       <div class="pie">
         <button value="cancelar" id="csv-cancelar">Cancelar</button>
         <button type="button" id="csv-atras" hidden>Atrás</button>
-        <button type="button" class="primario" id="csv-sig">Siguiente</button>
+        <button type="button" class="primario" id="csv-sig" disabled>Siguiente</button>
       </div>
     </form>
   </dialog>
