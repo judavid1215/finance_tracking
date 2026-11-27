@@ -1,5 +1,5 @@
 "use strict";
-// Pestaña Operaciones: navegación Grupos > Instrumentos > Operaciones con los datos reales
+// Pestaña Operaciones: navegación Grupos > Tipo de instrumento > Instrumentos > Operaciones con los datos reales
 // (GET /api/operaciones). Añadir, editar y borrar operaciones guardan de verdad (POST/PUT/DELETE);
 // importar CSV también guarda; crear instrumento y mover siguen siendo maqueta: abren su diálogo pero no guardan nada.
 (() => {
@@ -16,6 +16,16 @@
     }
   };
 
+  // Tipos de instrumento, en el orden en que se muestran (clave de la base de datos → nombre)
+  const TIPOS = [
+    ["Fondo", "Fondos"],
+    ["ETF", "ETFs"],
+    ["Accion", "Acciones"],
+    ["Cripto", "Cripto"],
+    ["Plan_pensiones", "Planes de pensiones"],
+  ];
+  const nombreTipo = (clave) => (TIPOS.find(([c]) => c === clave) || [clave, clave])[1];
+
   // De la respuesta del servidor a lo que pinta la lista: [tipo, fecha, participaciones, importe, id, detalle]
   function preparaDatos(r) {
     return r.grupos.map((g) => ({
@@ -25,6 +35,7 @@
         id: x.id,
         nombre: x.nombre,
         divisa: x.divisa,
+        tipo: x.tipo,
         ops: x.operaciones.map((o) => [
           o.tipo,
           fechaOp.format(new Date(o.fecha + "T00:00:00")).replace(/\./g, ""),
@@ -49,8 +60,9 @@
   }
   async function recargar() {
     DATOS = preparaDatos(await pedir("/api/operaciones"));
-    if (nav.g !== null && !DATOS[nav.g]) nav.g = nav.i = null;
+    if (nav.g !== null && !DATOS[nav.g]) nav.g = nav.t = nav.i = null;
     else if (nav.i !== null && !DATOS[nav.g].instrumentos[nav.i]) nav.i = null;
+    if (nav.t !== null && nav.i === null && !tiposDelGrupo().some(([c]) => c === nav.t)) nav.t = null;
     pintar();
     if (typeof refrescarGrafico === "function") await refrescarGrafico();
   }
@@ -59,9 +71,19 @@
     $(id).hidden = !texto;
   }
 
-  const nav = { g: null, i: null }; // índices del grupo e instrumento abiertos (null = ese nivel no está abierto)
+  // Grupo (índice), tipo de instrumento (clave) e instrumento (índice en el grupo) abiertos;
+  // null = ese nivel no está abierto
+  const nav = { g: null, t: null, i: null };
   const grupo = () => DATOS[nav.g];
   const instrumento = () => DATOS[nav.g].instrumentos[nav.i];
+  // Tipos que tiene el grupo abierto, [clave, nombre, nº de instrumentos], en el orden de TIPOS
+  const tiposDelGrupo = () => {
+    const claves = new Set(grupo().instrumentos.map((x) => x.tipo));
+    const conocidos = TIPOS.map(([c]) => c);
+    return [...conocidos, ...[...claves].filter((c) => !conocidos.includes(c))]
+      .filter((c) => claves.has(c))
+      .map((c) => [c, nombreTipo(c), grupo().instrumentos.filter((x) => x.tipo === c).length]);
+  };
   const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
   function boton(texto, extra = {}, clase = "") {
@@ -127,8 +149,9 @@
   function migas() {
     const m = $("migas");
     m.replaceChildren();
-    const trozos = [["Grupos", () => { nav.g = nav.i = null; pintar(); }]];
-    if (nav.g !== null) trozos.push([grupo().nombre, () => { nav.i = null; pintar(); }]);
+    const trozos = [["Grupos", () => { nav.g = nav.t = nav.i = null; pintar(); }]];
+    if (nav.g !== null) trozos.push([grupo().nombre, () => { nav.t = nav.i = null; pintar(); }]);
+    if (nav.t !== null) trozos.push([nombreTipo(nav.t), () => { nav.i = null; pintar(); }]);
     if (nav.i !== null) trozos.push([instrumento().nombre, null]);
     trozos[trozos.length - 1][1] = null; // el último es donde estás: título, no enlace
     trozos.forEach(([texto, alPulsar], k) => {
@@ -155,10 +178,15 @@
       acciones.append(boton("+ Grupo", { abrir: "d-grupo" }, "primario"));
       if (!DATOS.length) lista.append(vacio("Todavía no hay grupos."));
       DATOS.forEach((g, k) => lista.append(fila(g.nombre, plural(g.instrumentos.length, "instrumento", "instrumentos"), () => { nav.g = k; pintar(); })));
-    } else if (nav.i === null) {
+    } else if (nav.t === null) {
       acciones.append(boton("+ Instrumento", { abrir: "d-instrumento" }, "primario"), boton("Importar CSV", { abrir: "d-csv" }), boton("Borrar grupo", { borrarGrupo: "1" }, "peligro"));
       if (!grupo().instrumentos.length) lista.append(vacio("Este grupo no tiene operaciones."));
-      grupo().instrumentos.forEach((x, k) => lista.append(fila(x.nombre, plural(x.ops.length, "operación", "operaciones"), () => { nav.i = k; pintar(); })));
+      tiposDelGrupo().forEach(([clave, nombre, n]) => lista.append(fila(nombre, plural(n, "instrumento", "instrumentos"), () => { nav.t = clave; pintar(); })));
+    } else if (nav.i === null) {
+      acciones.append(boton("+ Instrumento", { abrir: "d-instrumento" }, "primario"), boton("Importar CSV", { abrir: "d-csv" }));
+      grupo().instrumentos.forEach((x, k) => {
+        if (x.tipo === nav.t) lista.append(fila(x.nombre, plural(x.ops.length, "operación", "operaciones"), () => { nav.i = k; pintar(); }));
+      });
     } else {
       acciones.append(boton("+ Añadir", { abrir: "d-anadir" }, "primario"), boton("Mover a otro grupo", { abrir: "d-mover" }), boton("Borrar instrumento", { borrarInstrumento: "1" }, "peligro"));
       instrumento().ops.forEach((o) => lista.append(filaOperacion(o)));
@@ -271,7 +299,7 @@
     if (!confirm(aviso)) return;
     try {
       await enviar(`/api/grupos/${g.id}?con_operaciones=1`, { method: "DELETE" });
-      nav.g = nav.i = null;
+      nav.g = nav.t = nav.i = null;
       await recargar();
     } catch (err) {
       alert(err.message);

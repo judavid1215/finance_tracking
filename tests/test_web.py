@@ -75,7 +75,7 @@ def test_operaciones_arbol(cliente):
     assert [x["nombre"] for x in g] == ["Pension", "Personal"]  # también los grupos vacíos
     personal = next(x for x in g if x["nombre"] == "Personal")
     (fondo,) = personal["instrumentos"]  # "Sin operaciones" no aparece
-    assert (fondo["nombre"], fondo["divisa"]) == ("Fondo A", "EUR")
+    assert (fondo["nombre"], fondo["divisa"], fondo["tipo"]) == ("Fondo A", "EUR", "Cripto")
     assert fondo["operaciones"] == [
         {"tipo": "compra", "id": 1, "fecha": "2026-01-01", "participaciones": 2, "precio": 10, "comision": 0, "importe": 20}
     ]

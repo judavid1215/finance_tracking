@@ -5,7 +5,7 @@
 - GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
 - GET /api/evolucion    ?periodo=1D|1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
                         (incluye las compras del periodo, para marcarlas en el gráfico)
-- GET /api/operaciones  grupos > instrumentos > operaciones (compras y ventas, con su id), para la pestaña Operaciones
+- GET /api/operaciones  grupos > instrumentos (con su tipo) > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
   PUT /api/operaciones/<tipo>/<id>  edita fecha, participaciones, precio y comisión
 - POST /api/grupos  (JSON: nombre) crea un grupo; DELETE /api/grupos/<id> lo borra si está vacío (con ?con_operaciones=1, también sus operaciones)
@@ -184,7 +184,7 @@ def crear_app(
     def operaciones():
         conn = abrir()
         try:
-            divisas = {r["id"]: r["divisa"] for r in conn.execute("SELECT id, divisa FROM instrumentos")}
+            info = {r["id"]: r for r in conn.execute("SELECT id, divisa, tipo FROM instrumentos")}
             arbol = {r["id"]: {"id": r["id"], "nombre": r["nombre"], "instrumentos": {}}
                      for r in conn.execute("SELECT id, nombre FROM grupos ORDER BY nombre")}
             for tipo, filas in (("compra", compras.listar(conn)), ("venta", ventas.listar(conn))):
@@ -192,7 +192,8 @@ def crear_app(
                     instr = arbol[o["grupo_id"]]["instrumentos"].setdefault(
                         o["instrumento_id"],
                         {"id": o["instrumento_id"], "nombre": o["instrumento"],
-                         "divisa": divisas[o["instrumento_id"]], "operaciones": []},
+                         "divisa": info[o["instrumento_id"]]["divisa"],
+                         "tipo": info[o["instrumento_id"]]["tipo"], "operaciones": []},
                     )
                     instr["operaciones"].append(
                         {

@@ -54,6 +54,33 @@ function rellenarInstrumentos() {
   estado.instrumento = $("instrumento").value;
 }
 
+// El periodo Día solo tiene datos de los tipos con ticks (ETFs, acciones y cripto): los fondos
+// y los planes solo tienen un precio al día. Con una selección sin ninguno, Día se desactiva.
+const TIPOS_CON_TICKS = ["ETF", "Accion", "Cripto"];
+function haySeriesDia() {
+  const g = Number(estado.grupo);
+  return todosInstrumentos.some(
+    (i) =>
+      TIPOS_CON_TICKS.includes(i.tipo) &&
+      (estado.grupo === "todos" || i.grupos.includes(g)) &&
+      (estado.instrumento === "todos" || String(i.id) === estado.instrumento),
+  );
+}
+
+// Activa o desactiva el botón Día según la selección; si estaba elegido, pasa a 1M.
+function actualizarDia() {
+  const b = $("periodos").querySelector('[data-periodo="1D"]');
+  if (!b) return;
+  const hay = haySeriesDia();
+  b.disabled = !hay;
+  b.title = hay ? "" : "Solo hay precios durante el día para ETFs, acciones y cripto";
+  if (!hay && estado.periodo === "1D") {
+    estado.periodo = "1M";
+    for (const x of $("periodos").children) x.setAttribute("aria-pressed", String(x.dataset.periodo === "1M"));
+    guardar();
+  }
+}
+
 function dibujarPeriodos(periodos) {
   const nav = $("periodos");
   nav.replaceChildren();
@@ -258,6 +285,7 @@ async function refrescarGrafico() {
     rellenarSelect($("grupo"), o.grupos, "Todos los grupos", estado.grupo);
     estado.grupo = $("grupo").value;
     rellenarInstrumentos();
+    actualizarDia();
   } catch (e) { /* si falla, se redibuja con las opciones que ya había */ }
   await cargar();
 }
@@ -284,6 +312,7 @@ async function iniciar() {
     estado.grupo = $("grupo").value;
     rellenarInstrumentos();
     dibujarPeriodos(o.periodos);
+    actualizarDia();
   } catch (e) {
     mostrarMensaje("No se pudo cargar: " + e.message);
     return;
@@ -293,10 +322,11 @@ async function iniciar() {
   $("grupo").addEventListener("change", (e) => {
     estado.grupo = e.target.value;
     rellenarInstrumentos();
+    actualizarDia();
     guardar();
     cargar();
   });
-  $("instrumento").addEventListener("change", (e) => { estado.instrumento = e.target.value; guardar(); cargar(); });
+  $("instrumento").addEventListener("change", (e) => { estado.instrumento = e.target.value; actualizarDia(); guardar(); cargar(); });
   $("periodos").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
