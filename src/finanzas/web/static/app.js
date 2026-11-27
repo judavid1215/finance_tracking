@@ -56,8 +56,25 @@ let todosInstrumentos = [];
 function rellenarInstrumentos() {
   const g = Number(estado.grupo);
   const lista = estado.grupo === "todos" ? todosInstrumentos : todosInstrumentos.filter((i) => i.grupos.includes(g));
-  rellenarSelect($("instrumento"), lista, "Todos los instrumentos", estado.instrumento);
-  estado.instrumento = $("instrumento").value;
+  const sel = $("instrumento");
+  sel.replaceChildren(new Option("Todos los instrumentos", "todos"));
+  // Agrupados por tipo de instrumento (optgroup) para encontrarlos más fácil.
+  const porTipo = new Map();
+  for (const i of lista) {
+    if (!porTipo.has(i.tipo)) porTipo.set(i.tipo, []);
+    porTipo.get(i.tipo).push(i);
+  }
+  const orden = ["Fondo", "ETF", "Accion", "Cripto", "Plan de pensiones"];
+  const etiqueta = { Fondo: "Fondos", ETF: "ETFs", Accion: "Acciones", Cripto: "Cripto", "Plan de pensiones": "Planes de pensiones" };
+  const tipos = [...porTipo.keys()].sort((a, b) => (orden.indexOf(a) + 1 || 99) - (orden.indexOf(b) + 1 || 99));
+  for (const t of tipos) {
+    const og = document.createElement("optgroup");
+    og.label = etiqueta[t] || t;
+    for (const i of porTipo.get(t)) og.append(new Option(i.nombre, String(i.id)));
+    sel.append(og);
+  }
+  sel.value = lista.some((i) => String(i.id) === estado.instrumento) ? estado.instrumento : "todos";
+  estado.instrumento = sel.value;
 }
 
 // El periodo Día solo tiene datos de los tipos con ticks (ETFs, acciones y cripto): los fondos
