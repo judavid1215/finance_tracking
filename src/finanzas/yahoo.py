@@ -102,6 +102,27 @@ def leer_historico(
     return filas, str(divisa).upper()
 
 
+def _completar_con_morningstar(
+    inst: sqlite3.Row,
+    filas: list[tuple[date, Decimal]],
+    guardado: tuple[date, date] | None,
+    hoy: date,
+) -> list[tuple[date, Decimal]]:
+    """Añade el último valor liquidativo de Morningstar si es de un día que Yahoo aún no tiene.
+
+    Morningstar solo da el último valor (no una serie): cubre el hueco de un día, no uno largo.
+    Se ignora si falla, si está en otra divisa o si no es posterior a lo ya disponible.
+    """
+    try:
+        fecha, precio, divisa = morningstar.leer_precio(inst["identificador"])
+    except (ValueError, OSError):
+        return filas
+    ultimo = max([f for f, _ in filas] + ([guardado[1]] if guardado else []), default=None)
+    if divisa != inst["divisa"] or fecha >= hoy or (ultimo is not None and fecha <= ultimo):
+        return filas
+    return [*filas, (fecha, precio)]
+
+
 def descargar_historico(
     conn: sqlite3.Connection, instrumento_id: int, hoy: date | None = None
 ) -> tuple[date | None, date | None, int]:
@@ -129,6 +150,8 @@ def descargar_historico(
         return None, None, 0
     filas, divisa = leer_historico(simbolo(inst), desde, permitir_vacio=bool(guardado))
     filas = [(f, p) for f, p in filas if f < hoy]
+    if inst["id_tipo"] == "ISIN":
+        filas = _completar_con_morningstar(inst, filas, guardado, hoy)
     if not filas:
         if guardado:
             return None, None, 0

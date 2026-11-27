@@ -126,6 +126,30 @@ def test_descargar_historico_desde_primera_compra(conn, monkeypatch):
     assert n == 3
 
 
+def test_descargar_historico_completa_con_morningstar(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeHistorico)  # Yahoo llega hasta el 7
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 1, 8), Decimal("13"), "EUR")
+    )
+    id_ = comprado(conn, "2026-01-02")
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 9)) == (
+        date(2026, 1, 2),
+        date(2026, 1, 8),
+        4,
+    )
+    assert precios.ultimo(conn, id_) == Decimal("13")
+
+
+def test_descargar_historico_morningstar_no_pisa_a_yahoo(conn, monkeypatch):
+    monkeypatch.setattr(yahoo.yf, "Ticker", FakeHistorico)
+    monkeypatch.setattr(
+        yahoo.morningstar, "leer_precio", lambda isin: (date(2026, 1, 7), Decimal("1"), "EUR")
+    )
+    id_ = comprado(conn, "2026-01-02")
+    assert yahoo.descargar_historico(conn, id_, date(2026, 1, 9))[2] == 3
+    assert precios.ultimo(conn, id_) == Decimal("12.1235")
+
+
 def test_descargar_historico_dos_veces_no_duplica(conn, monkeypatch):
     monkeypatch.setattr(yahoo.yf, "Ticker", FakeHistorico)
     id_ = comprado(conn)
