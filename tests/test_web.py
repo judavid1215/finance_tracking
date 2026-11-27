@@ -40,6 +40,7 @@ def test_opciones_solo_instrumentos_con_operaciones(cliente):
 def test_evolucion_total_y_por_grupo(cliente):
     r = cliente.get("/api/evolucion?periodo=max").get_json()
     assert r["periodo"] == "MAX" and r["desde"] == "2026-01-01" and r["hasta"] == "2026-01-10"
+    assert r["divisa"] == "EUR"
     assert r["resumen"]["valor"] == 36.0  # 3 participaciones a 12
     assert r["resumen"]["ganancia"] == 6.0
     assert [p["fecha"] for p in r["puntos"]] == ["2026-01-01", "2026-01-05", "2026-01-10"]
@@ -273,3 +274,95 @@ def test_borrar_grupo_con_operaciones(cliente):
     arbol = cliente.get("/api/operaciones").get_json()["grupos"]
     assert all(g["id"] != grupo for g in arbol)
     assert any(i["id"] == inst for g in arbol for i in g["instrumentos"])  # sigue en el otro grupo
+
+
+def test_evolucion_indica_la_divisa_de_la_serie(tmp_path):
+    ruta = tmp_path / "usd.sqlite3"
+    conn = db.conectar(str(ruta))
+    nvda = instrumentos.anadir(conn, "NVIDIA", "accion", "USD", "NVDA")
+    ibe = instrumentos.anadir(conn, "Iberdrola", "accion", "EUR", "IBE")
+    for i in (nvda, ibe):
+        compras.anadir(conn, i, date(2026, 1, 1), "1", "10")
+        precios.anadir(conn, i, date(2026, 1, 1), "10")
+    conn.execute("INSERT INTO tipos_cambio VALUES ('USD', '2026-01-01', '0.5')")
+    conn.commit()
+    conn.close()
+    c = crear_app(ruta, hoy=lambda: date(2026, 1, 10)).test_client()
+    solo = c.get(f"/api/evolucion?periodo=MAX&instrumento={nvda}").get_json()
+    assert solo["divisa"] == "USD" and solo["resumen"]["valor"] == 10.0  # sin convertir
+    todos = c.get("/api/evolucion?periodo=MAX").get_json()
+    assert todos["divisa"] == "EUR" and todos["resumen"]["valor"] == 15.0  # 10*0.5 + 10
+
+
+def test_mover_instrumento_de_grupo(cliente):
+    o = cliente.get("/api/opciones").get_json()
+    fondo = o["instrumentos"][0]["id"]
+    pension = next(g["id"] for g in o["grupos"] if g["nombre"] == "Pension")
+    personal = next(g["id"] for g in o["grupos"] if g["nombre"] == "Personal")
+    antes = cliente.get(f"/api/evolucion?periodo=MAX&grupo={personal}").get_json()
+    r = cliente.post(
+        f"/api/instrumentos/{fondo}/mover", json={"origen": pension, "destino": personal}
+    )
+    assert r.status_code == 200 and r.get_json()["movidas"] >= 1
+    arbol = cliente.get("/api/operaciones").get_json()["grupos"]
+    por_nombre = {g["nombre"]: g["instrumentos"] for g in arbol}
+    assert por_nombre["Pension"] == [] and len(por_nombre["Personal"]) == 1
+    despues = cliente.get(f"/api/evolucion?periodo=MAX&grupo={personal}").get_json()
+    assert despues["resumen"]["valor"] > antes["resumen"]["valor"]  # ahora suma lo de Pension
+
+
+def test_mover_instrumento_rechaza_peticiones_invalidas(cliente):
+    o = cliente.get("/api/opciones").get_json()
+    fondo = o["instrumentos"][0]["id"]
+    personal = next(g["id"] for g in o["grupos"] if g["nombre"] == "Personal")
+    assert cliente.post(f"/api/instrumentos/{fondo}/mover", json={}).status_code == 400
+    mismo = {"origen": personal, "destino": personal}
+    assert cliente.post(f"/api/instrumentos/{fondo}/mover", json=mismo).status_code == 422
+    inexistente = {"origen": personal, "destino": 999}
+    assert cliente.post(f"/api/instrumentos/{fondo}/mover", json=inexistente).status_code == 422
+
+
+def _csv_ibkr():
+    cab = (
+        '"CurrencyPrimary","FXRateToBase","AssetClass","Symbol","Description","Conid","ISIN",'
+        '"TradeID","DateTime","TradeDate","Quantity","TradeMoney","IBCommission",'
+        '"IBCommissionCurrency","NetCash","OrigTradePrice","Buy/Sell","IBOrderID","TransactionID"'
+    )
+    filas = [
+        '"USD","1","STK","NVDA","NVIDIA CORP","1","US67066G1040","1","20260102;093000",'
+        '"20260102","2","200","-0.5","USD","-200.5","0","BUY","7","9"',
+        '"USD","1","CASH","EUR.USD","EUR.USD","1","","2","20260102;093000","20260102",'
+        '"-1","-1","0","EUR","0","0","SELL","8","10"',
+    ]
+    return "\n".join([cab, *filas]).encode()
+
+
+def test_importar_csv_de_ibkr_por_la_web(cliente):
+    import io
+
+    def subir(url):
+        datos = {"archivo": (io.BytesIO(_csv_ibkr()), "ibkr.csv"), "grupo": "Interactive Brokers"}
+        return cliente.post(url, data=datos, content_type="multipart/form-data")
+
+    r = subir("/api/importar/vista-previa")
+    previa = r.get_json()
+    assert r.status_code == 200 and previa["formato"] == "ibkr"
+    assert previa["operaciones"] == [
+        {
+            "fecha": "2026-01-02",
+            "simbolo": "NVDA",
+            "lado": "BUY",
+            "participaciones": 2.0,
+            "precio": 100.0,
+            "divisa": "USD",
+        }
+    ]
+    assert previa["nuevos"] == ["NVIDIA CORP"] and previa["ignoradas"] == 1
+    assert subir("/api/importar").status_code == 201
+    grupo = next(
+        g for g in cliente.get("/api/operaciones").get_json()["grupos"]
+        if g["nombre"] == "Interactive Brokers"
+    )
+    assert [i["nombre"] for i in grupo["instrumentos"]] == ["NVIDIA CORP"]
+    otra = subir("/api/importar/vista-previa").get_json()  # reimportar: ya no hay nada nuevo
+    assert otra["operaciones"] == [] and otra["repetidas"] == 1

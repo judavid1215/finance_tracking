@@ -51,9 +51,10 @@ def mover_instrumento(
 ) -> int:
     """Pasa todas las compras y ventas de un instrumento del grupo `origen` al grupo `destino`.
 
-    Devuelve cuántas operaciones se movieron. ValueError (y no cambia nada) si el destino no
-    existe, si es el mismo grupo, si no hay operaciones que mover o si el destino ya tiene
-    operaciones de ese instrumento.
+    Devuelve cuántas operaciones se movieron. Si el destino ya tiene operaciones de ese
+    instrumento, se suman a las suyas (coste medio conjunto): como cada grupo cubría por sí solo
+    sus ventas, juntos tampoco pueden vender de más. ValueError (y no cambia nada) si el destino
+    no existe, si es el mismo grupo o si no hay operaciones que mover.
     """
     if origen_id == destino_id:
         raise ValueError("El grupo de origen y el de destino son el mismo")
@@ -66,8 +67,6 @@ def mover_instrumento(
         conn.execute(en_grupo.format(t=t), {"i": instrumento_id, "g": g}).fetchone()[0]
         for t in ("compras", "ventas")
     )
-    if cuenta(destino_id):
-        raise ValueError("El grupo de destino ya tiene operaciones de este instrumento")
     movidas = cuenta(origen_id)
     if not movidas:
         raise ValueError("El instrumento no tiene operaciones en el grupo de origen")

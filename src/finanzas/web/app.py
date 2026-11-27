@@ -4,13 +4,17 @@
 - GET /api/opciones     grupos e instrumentos con operaciones (y en qué grupos), para los selectores
 - GET /api/estado       cuándo se actualizaron los precios por última vez (ISO UTC o null)
 - GET /api/evolucion    ?periodo=1D|1S|1M|1A|YTD|MAX &grupo=<id> &instrumento=<id>
-                        (incluye las compras del periodo, para marcarlas en el gráfico)
+                        (incluye las compras del periodo, para marcarlas en el gráfico; todo va en la divisa
+                        de "divisa": la del instrumento si todos los elegidos comparten una, si no EUR)
 - GET /api/operaciones  grupos > instrumentos (con su tipo) > operaciones (compras y ventas, con su id), para la pestaña Operaciones
 - POST /api/operaciones  añade una compra o venta; DELETE /api/operaciones/<tipo>/<id> la borra
   PUT /api/operaciones/<tipo>/<id>  edita fecha, participaciones, precio y comisión
 - POST /api/grupos  (JSON: nombre) crea un grupo; DELETE /api/grupos/<id> lo borra si está vacío (con ?con_operaciones=1, también sus operaciones)
 - DELETE /api/instrumentos/<id>  borra el instrumento con todas sus operaciones y precios
-- POST /api/importar/vista-previa  (multipart: archivo, grupo) lee un CSV de MyInvestor sin guardar
+- POST /api/instrumentos/<id>/mover  (JSON: origen, destino = ids de grupo) pasa todas sus operaciones
+  del grupo de origen al de destino (si el destino ya lo tiene, se suman)
+- POST /api/importar/vista-previa  (multipart: archivo, grupo) lee un CSV sin guardar: de órdenes de
+  MyInvestor (un fondo) o de Flex Query de Interactive Brokers (acciones, formato "ibkr")
   POST /api/importar  (multipart: archivo, grupo, nombre, ticker_yahoo) lo importa al grupo
 - GET /api/aportacion/<id>  evolución de una compra concreta, en la divisa del instrumento
 
@@ -32,6 +36,7 @@ from finanzas import (
     evolucion,
     grupos as grupos_,
     importacion,
+    importacion_ibkr,
     instrumentos,
     mercado,
     periodos,
@@ -113,6 +118,7 @@ def crear_app(
         try:
             try:
                 grupo, instrumento = _entero("grupo"), _entero("instrumento")
+                divisa = evolucion.moneda(conn, grupo, instrumento)
                 if intradia:
                     filas = evolucion.serie_intradia(conn, grupo, instrumento)
                     compras = []
@@ -156,6 +162,7 @@ def crear_app(
             {
                 "precio": precio,
                 "periodo": periodo.upper(),
+                "divisa": divisa,
                 "desde": r["desde"] and r["desde"].isoformat(),
                 "hasta": r["hasta"] and r["hasta"].isoformat(),
                 "resumen": resumen and {k: _num(v) for k, v in resumen.items()},
@@ -307,6 +314,9 @@ def crear_app(
                 ruta = Path(carpeta) / "ordenes.csv"
                 archivo.save(ruta)
                 try:
+                    if importacion_ibkr.es_flex_query(ruta):
+                        plan = importacion_ibkr.preparar(conn, ruta, grupo)
+                        return jsonify(importacion_ibkr.a_json(plan))
                     p = importacion.previsualizar(conn, ruta, grupo)
                 except (ValueError, UnicodeDecodeError) as e:
                     abort(422, str(e))
@@ -337,17 +347,23 @@ def crear_app(
                 ruta = Path(carpeta) / "ordenes.csv"
                 archivo.save(ruta)
                 try:
-                    p = importacion.previsualizar(conn, ruta, grupo)  # ISIN y divisa, del fichero
-                    plan = importacion.importar(
-                        conn, ruta, p["isin"], p["existente"] or nombre, p["divisa"],
-                        request.form.get("ticker_yahoo"), grupo,
-                    )
+                    if importacion_ibkr.es_flex_query(ruta):  # acciones de Interactive Brokers
+                        plan = importacion_ibkr.preparar(conn, ruta, grupo)
+                        importacion_ibkr.aplicar(conn, plan)
+                        resumen = importacion_ibkr.resumen(plan)
+                    else:
+                        p = importacion.previsualizar(conn, ruta, grupo)  # ISIN y divisa, del fichero
+                        plan = importacion.importar(
+                            conn, ruta, p["isin"], p["existente"] or nombre, p["divisa"],
+                            request.form.get("ticker_yahoo"), grupo,
+                        )
+                        resumen = importacion.resumen(plan)
                 except (ValueError, UnicodeDecodeError) as e:  # incluye FondoYaImportado
                     abort(422, str(e))
         finally:
             conn.close()
         tras_importar()  # sin precios no se puede dibujar nada: se bajan ya
-        return jsonify({"resumen": importacion.resumen(plan)}), 201
+        return jsonify({"resumen": resumen}), 201
 
     @app.post("/api/grupos")
     def crear_grupo():
@@ -389,6 +405,23 @@ def crear_app(
         if not existia:
             abort(404, "No existe ese instrumento")
         return "", 204
+
+    @app.post("/api/instrumentos/<int:instrumento_id>/mover")
+    def mover_instrumento(instrumento_id):
+        d = request.get_json(silent=True) or {}
+        try:
+            origen, destino = int(d["origen"]), int(d["destino"])
+        except (KeyError, TypeError, ValueError):
+            abort(400, "faltan los grupos de origen y destino")
+        conn = abrir()
+        try:
+            try:
+                movidas = grupos_.mover_instrumento(conn, instrumento_id, origen, destino)
+            except ValueError as e:  # mismo grupo, destino inexistente o nada que mover
+                abort(422, str(e))
+        finally:
+            conn.close()
+        return jsonify({"movidas": movidas})
 
     @app.get("/api/aportacion/<int:compra_id>")
     def datos_aportacion(compra_id):

@@ -135,9 +135,19 @@ def test_mover_instrumento_rechaza_casos_invalidos(conn, fondo):
     otro = grupos.anadir(conn, "Otro")
     with pytest.raises(ValueError, match="no tiene operaciones"):
         grupos.mover_instrumento(conn, fondo, vacio, otro)
-    with pytest.raises(ValueError, match="ya tiene operaciones"):
-        grupos.mover_instrumento(conn, fondo, personal, pension)  # el destino ya lo tiene
     assert len(compras.listar(conn, grupo_id=personal)) == 1  # nada cambió
+
+
+def test_mover_a_un_grupo_que_ya_lo_tiene_suma_las_operaciones(conn, fondo):
+    personal = grupos.anadir(conn, "Personal")
+    pension = grupos.anadir(conn, "Pension")
+    compras.anadir(conn, fondo, date(2026, 3, 1), 5, 10, grupo_id=pension)
+    compras.anadir(conn, fondo, date(2026, 1, 5), 10, 20, grupo_id=personal)
+    ventas.anadir(conn, fondo, date(2026, 2, 1), 4, 12, grupo_id=personal)
+    assert grupos.mover_instrumento(conn, fondo, personal, pension) == 2
+    p = posicion.calcular(conn, fondo, pension)
+    assert p["participaciones"] == 11  # 5 + 10 - 4
+    assert posicion.calcular(conn, fondo, personal)["participaciones"] == 0
 
 
 def test_base_anterior_a_los_grupos_se_rechaza_con_un_mensaje_claro(tmp_path):

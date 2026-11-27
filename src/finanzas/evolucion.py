@@ -1,4 +1,8 @@
-"""Evolución diaria de la cartera en euros: cuánto tenías invertido y cuánto valía cada día.
+"""Evolución diaria de la cartera: cuánto tenías invertido y cuánto valía cada día.
+
+La divisa de la serie la decide `moneda()`: la de los instrumentos si todos los elegidos están en
+la misma (un instrumento en dólares se ve en dólares, sin convertir) y el euro en cualquier otro
+caso (mezcla de divisas o nada elegido).
 
 Cada día lleva, por instrumento y grupo, la posición de ese día (coste medio, ver posicion.py)
 y el último precio guardado hasta ese día (si un día no cotiza, vale el precio anterior). Los
@@ -7,9 +11,10 @@ primera operación.
 
 - Si un instrumento todavía no tiene precio en esa fecha (p. ej. se compró en festivo y su
   primer precio llega unos días después), vale lo que costó: ni gana ni pierde.
-- Como en cartera.total(), cada día se convierte a euros con el tipo de cambio de ese día
-  (el último guardado hasta entonces; antes del primero se usa el primero). Con una divisa sin
-  ningún tipo de cambio guardado se lanza ValueError.
+- Cuando la serie va en euros y un instrumento está en otra divisa, como en cartera.total() cada
+  día se convierte con el tipo de cambio de ese día (el último guardado hasta entonces; antes del
+  primero se usa el primero). Con una divisa sin ningún tipo de cambio guardado se lanza
+  ValueError. Si la serie va en la divisa del instrumento no hace falta ningún tipo de cambio.
 - Todo en Decimal.
 """
 
@@ -46,23 +51,43 @@ def _tasas(conn, divisa):
     return fechas, valores
 
 
+def _pares(conn, grupo_id, instrumento_id):
+    """Los pares (instrumento, grupo) con operaciones que encajan con los filtros."""
+    return [
+        (inst_id, g)
+        for inst_id, g in conn.execute(
+            "SELECT instrumento_id, grupo_id FROM compras UNION SELECT instrumento_id, grupo_id "
+            "FROM ventas ORDER BY 1, 2"
+        )
+        if (grupo_id is None or g == grupo_id)
+        and (instrumento_id is None or inst_id == instrumento_id)
+    ]
+
+
+def moneda(
+    conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
+) -> str:
+    """Divisa en la que se muestra lo elegido (mismos filtros que serie()): la de los
+    instrumentos si todos comparten la misma, y el euro si hay mezcla o no hay ninguno."""
+    ids = {inst_id for inst_id, _ in _pares(conn, grupo_id, instrumento_id)}
+    usadas = {
+        conn.execute("SELECT divisa FROM instrumentos WHERE id = ?", (i,)).fetchone()[0]
+        for i in ids
+    }
+    return usadas.pop() if len(usadas) == 1 else divisas.BASE
+
+
 def _posiciones(conn, grupo_id, instrumento_id):
     """Las posiciones (instrumento, grupo) a contar: (posiciones, inicio, dias), donde cada
     posición es (instrumento_id, divisa, fechas de operación, pasos, fechas de precio, precios,
     tasas), inicio la fecha de la primera operación (None si no hay) y dias las fechas con precio
-    o con operación."""
-    pares = conn.execute(
-        "SELECT instrumento_id, grupo_id FROM compras UNION SELECT instrumento_id, grupo_id "
-        "FROM ventas ORDER BY 1, 2"
-    ).fetchall()
+    o con operación. `tasas` es None si la divisa del instrumento es la de la serie (ver
+    moneda()): no hay que convertir."""
+    destino = moneda(conn, grupo_id, instrumento_id)
     posiciones = []
     inicio = None
     dias = set()
-    for inst_id, g in pares:
-        if grupo_id is not None and g != grupo_id:
-            continue
-        if instrumento_id is not None and inst_id != instrumento_id:
-            continue
+    for inst_id, g in _pares(conn, grupo_id, instrumento_id):
         pasos = posicion.historial(conn, inst_id, g)
         pasos = [(date.fromisoformat(f), n, inv) for f, n, inv in pasos]
         divisa = conn.execute(
@@ -74,7 +99,15 @@ def _posiciones(conn, grupo_id, instrumento_id):
             (inst_id,),
         )
         posiciones.append(
-            (inst_id, divisa, [p[0] for p in pasos], pasos, pf, pv, _tasas(conn, divisa))
+            (
+                inst_id,
+                divisa,
+                [p[0] for p in pasos],
+                pasos,
+                pf,
+                pv,
+                None if divisa == destino else _tasas(conn, divisa),
+            )
         )
         dias.update(pf)
         if pf:  # el día de cada operación sale aunque ese día aún no haya precio
@@ -87,10 +120,10 @@ def _posiciones(conn, grupo_id, instrumento_id):
 def serie(
     conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
 ) -> list[dict]:
-    """Una fila por día: {"fecha", "invertido", "valor", "ganancia", "rentabilidad"} en euros
-    (rentabilidad en tanto por uno, None si no había nada invertido). Con grupo_id solo cuenta
-    ese grupo y con instrumento_id solo ese instrumento (se pueden combinar). Sin operaciones o
-    sin precios, devuelve una lista vacía."""
+    """Una fila por día: {"fecha", "invertido", "valor", "ganancia", "rentabilidad"} en la divisa
+    de moneda() (rentabilidad en tanto por uno, None si no había nada invertido). Con grupo_id
+    solo cuenta ese grupo y con instrumento_id solo ese instrumento (se pueden combinar). Sin
+    operaciones o sin precios, devuelve una lista vacía."""
     posiciones, inicio, dias = _posiciones(conn, grupo_id, instrumento_id)
     if inicio is None:
         return []
@@ -136,7 +169,8 @@ def serie_intradia(
     La ventana son las `horas` anteriores al último tick (no al reloj: con la bolsa cerrada se
     ve la última sesión). Devuelve la primera fila con el estado al empezar la ventana y después
     una por cada instante con algún tick: {"fecha" (datetime UTC), "invertido", "valor",
-    "ganancia", "rentabilidad"}, como `serie` pero en euros al cambio del día. En cada instante
+    "ganancia", "rentabilidad"}, como `serie` (misma divisa, ver moneda(); si es euros, al cambio
+    del día). En cada instante
     cada instrumento vale su último tick; lo que no tiene ticks (fondos, planes) vale su último
     precio diario. Sin ticks de lo elegido, devuelve una lista vacía.
     """
@@ -196,8 +230,9 @@ def serie_intradia(
 def aportaciones(
     conn: sqlite3.Connection, grupo_id: int | None = None, instrumento_id: int | None = None
 ) -> list[dict]:
-    """Las compras (con su comisión) en euros al cambio de su día, por fecha:
-    {"fecha", "importe", "instrumento"}. Mismos filtros que serie()."""
+    """Las compras (con su comisión) por fecha, en la divisa de moneda() (si es euros, al cambio
+    de su día): {"fecha", "importe", "instrumento"}. Mismos filtros que serie()."""
+    destino = moneda(conn, grupo_id, instrumento_id)
     sql = (
         "SELECT c.fecha, c.participaciones, c.precio, c.comision, i.nombre, i.divisa "
         "FROM compras c JOIN instrumentos i ON i.id = c.instrumento_id WHERE 1 = 1"
@@ -214,7 +249,7 @@ def aportaciones(
     filas = conn.execute(sql + " ORDER BY c.fecha", params)
     for fecha, n, precio, comision, nombre, divisa in filas:
         if divisa not in tasas:
-            tasas[divisa] = _tasas(conn, divisa)
+            tasas[divisa] = None if divisa == destino else _tasas(conn, divisa)
         dia = date.fromisoformat(fecha)
         if tasas[divisa] is None:
             tasa = Decimal(1)

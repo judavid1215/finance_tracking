@@ -10,8 +10,14 @@ let sello = null; // última actualización de precios que conoce el servidor
 const hora = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 const $ = (id) => document.getElementById(id);
-const euros = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
-const eurosFino = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
+// Importes en la divisa de la serie: la del instrumento si todos los elegidos comparten una, si no EUR.
+// (Los nombres "euros" son históricos: ahora dependen de fijarDivisa.)
+let euros, eurosFino;
+function fijarDivisa(divisa) {
+  euros = new Intl.NumberFormat("es-ES", { style: "currency", currency: divisa, maximumFractionDigits: 0 });
+  eurosFino = new Intl.NumberFormat("es-ES", { style: "currency", currency: divisa, maximumFractionDigits: 2 });
+}
+fijarDivisa("EUR");
 const pct = new Intl.NumberFormat("es-ES", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1, signDisplay: "exceptZero" });
 const fechaCorta = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" });
 const fechaLarga = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" });
@@ -271,6 +277,7 @@ async function cargar(enSilencio = false) {
   if (error && enSilencio) return; // en silencio, un fallo no borra lo que ya se ve
   if (enSilencio && JSON.stringify(datos) === JSON.stringify(ultimosDatos)) return; // nada nuevo: no se redibuja
   ultimosDatos = datos;
+  fijarDivisa((datos && datos.divisa) || "EUR");
   mostrarMensaje(error ? "No se pudo cargar: " + error.message : datos.puntos.length ? "" : datos.periodo === "1D" ? "Sin precios de hoy (solo ETFs, acciones y cripto tienen precio durante el día)" : "Sin datos en este periodo");
   pintarTarjetas(ultimosDatos);
   if (enSilencio) actualizarGrafico(); else pintarGrafico();

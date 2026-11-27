@@ -75,13 +75,23 @@ def test_filtra_por_instrumento_y_respeta_las_ventas(conn):
     assert todo[-1]["valor"] == Decimal(30)  # lo de A ya está vendido
 
 
-def test_usd_se_convierte_al_cambio_del_dia(conn):
+def test_usd_solo_se_queda_en_dolares(conn):
     nvda = instrumentos.anadir(conn, "NVIDIA", "accion", "USD", "NVDA")
     compras.anadir(conn, nvda, date(2026, 11, 1), "1", "100")
+    tick(conn, nvda, "2026-11-26T15:00:00Z", "150")
+    assert evolucion.serie_intradia(conn)[-1]["valor"] == Decimal("150")  # sin tipo de cambio
+
+
+def test_usd_con_otra_divisa_se_convierte_al_cambio_del_dia(conn):
+    nvda = instrumentos.anadir(conn, "NVIDIA", "accion", "USD", "NVDA")
+    euro = instrumentos.anadir(conn, "Iberdrola", "accion", "EUR", "IBE")
+    compras.anadir(conn, nvda, date(2026, 11, 1), "1", "100")
+    compras.anadir(conn, euro, date(2026, 11, 1), "1", "10")
     conn.execute("INSERT INTO tipos_cambio (divisa, fecha, tasa) VALUES ('USD','2026-11-25','0.8')")
     conn.commit()
     tick(conn, nvda, "2026-11-26T15:00:00Z", "150")
-    assert evolucion.serie_intradia(conn)[-1]["valor"] == Decimal("120.0")
+    tick(conn, euro, "2026-11-26T15:00:00Z", "10")
+    assert evolucion.serie_intradia(conn)[-1]["valor"] == Decimal("130.0")  # 150*0.8 + 10
 
 
 @pytest.fixture

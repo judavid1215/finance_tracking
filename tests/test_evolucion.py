@@ -35,7 +35,11 @@ def test_valor_por_dia_con_precio_arrastrado(conn):
     assert [(f["fecha"].day, f["invertido"], f["valor"]) for f in s] == [
         (1, Decimal("20"), Decimal("20")),
         (2, Decimal("20"), Decimal("24")),
-        (3, Decimal("40"), Decimal("36")),  # día de la compra, sin precio nuevo: vale el último (12)
+        (
+            3,
+            Decimal("40"),
+            Decimal("36"),
+        ),  # día de la compra, sin precio nuevo: vale el último (12)
         (4, Decimal("40"), Decimal("60")),
     ]
     assert s[-1]["rentabilidad"] == Decimal("0.5")
@@ -68,22 +72,63 @@ def test_venta_y_grupo(conn):
     assert (solo[-1]["invertido"], solo[-1]["valor"]) == (Decimal("40"), Decimal("40"))
 
 
-def test_divisa_con_tipo_de_cambio_del_dia(conn):
+def _con_euro(conn):
+    """Un instrumento en euros (1 a 10 €) para que la serie mezcle divisas y vaya en euros."""
+    id_ = _btc(conn, "Euro")
+    compras.anadir(conn, id_, date(2026, 1, 1), "1", "10")
+    precios.anadir(conn, id_, date(2026, 1, 1), "10")
+    precios.anadir(conn, id_, date(2026, 1, 3), "10")
+    return id_
+
+
+def test_divisa_mezclada_va_en_euros_con_tipo_de_cambio_del_dia(conn):
     id_ = _btc(conn, "Apple", "USD")
+    _con_euro(conn)
     compras.anadir(conn, id_, date(2026, 1, 1), "1", "100")
     precios.anadir(conn, id_, date(2026, 1, 1), "100")
     precios.anadir(conn, id_, date(2026, 1, 3), "100")
     divisas.guardar(conn, "USD", date(2026, 1, 2), "0.5")  # el primer día usa el primero
     divisas.guardar(conn, "USD", date(2026, 1, 3), "0.8")
+    assert evolucion.moneda(conn) == "EUR"
     s = evolucion.serie(conn)
-    assert [f["valor"] for f in s] == [Decimal("50"), Decimal("80")]
+    assert [f["valor"] for f in s] == [Decimal("60"), Decimal("90")]
 
 
-def test_divisa_sin_tipo_de_cambio(conn):
+def test_divisa_mezclada_sin_tipo_de_cambio(conn):
     id_ = _btc(conn, "Apple", "USD")
+    _con_euro(conn)
     compras.anadir(conn, id_, date(2026, 1, 1), "1", "100")
     with pytest.raises(ValueError, match="USD"):
         evolucion.serie(conn)
+
+
+def test_un_instrumento_en_dolares_se_ve_en_dolares_sin_tipo_de_cambio(conn):
+    id_ = _btc(conn, "Apple", "USD")
+    compras.anadir(conn, id_, date(2026, 1, 1), "2", "100", comision="1")
+    precios.anadir(conn, id_, date(2026, 1, 1), "100")
+    precios.anadir(conn, id_, date(2026, 1, 2), "110")  # no hay ningún tipo de cambio guardado
+    assert evolucion.moneda(conn, instrumento_id=id_) == "USD"
+    s = evolucion.serie(conn, instrumento_id=id_)
+    assert (s[-1]["invertido"], s[-1]["valor"]) == (Decimal("201"), Decimal("220"))
+    [c] = evolucion.aportaciones(conn, instrumento_id=id_)
+    assert c["importe"] == Decimal("201")
+
+
+def test_moneda_segun_lo_elegido(conn):
+    assert evolucion.moneda(conn) == "EUR"  # sin nada
+    usd1 = _btc(conn, "Apple", "USD")
+    usd2 = _btc(conn, "Nvidia", "USD")
+    euro = _btc(conn, "Euro")
+    for i in (usd1, usd2):
+        compras.anadir(conn, i, date(2026, 1, 1), "1", "10")
+    assert evolucion.moneda(conn) == "USD"  # todos en dólares: se mantiene
+    laura = grupos.anadir(conn, "Laura")
+    compras.anadir(conn, euro, date(2026, 1, 1), "1", "10", grupo_id=laura)
+    assert evolucion.moneda(conn) == "EUR"  # alguno en euros: todo a euros
+    assert evolucion.moneda(conn, instrumento_id=euro) == "EUR"
+    assert evolucion.moneda(conn, instrumento_id=usd2) == "USD"
+    assert evolucion.moneda(conn, grupo_id=laura) == "EUR"
+    assert evolucion.moneda(conn, grupo_id=grupos.por_defecto(conn)) == "USD"
 
 
 def test_ultimo_dia_coincide_con_total(conn):
@@ -100,7 +145,13 @@ def test_ultimo_dia_coincide_con_total(conn):
 def test_mensual(conn):
     id_ = _btc(conn)
     compras.anadir(conn, id_, date(2026, 1, 1), "1", "10")
-    for d in (date(2026, 1, 1), date(2026, 1, 30), date(2026, 2, 2), date(2026, 2, 27), date(2026, 3, 2)):
+    for d in (
+        date(2026, 1, 1),
+        date(2026, 1, 30),
+        date(2026, 2, 2),
+        date(2026, 2, 27),
+        date(2026, 3, 2),
+    ):
         precios.anadir(conn, id_, d, "10")
     assert [f["fecha"] for f in evolucion.mensual(evolucion.serie(conn))] == [
         date(2026, 1, 30),

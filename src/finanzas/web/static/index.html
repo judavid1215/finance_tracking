@@ -47,7 +47,7 @@
 
   <!-- ===== Operaciones: datos reales en solo lectura ===== -->
   <main id="s-operaciones" hidden>
-    <p class="aviso-diseno">Datos reales. Añadir, editar y borrar compras y ventas funciona; importar CSV también; crear instrumentos y mover aún son maqueta.</p>
+    <p class="aviso-diseno">Datos reales. Añadir, editar y borrar compras y ventas funciona; importar CSV y mover instrumentos de grupo también; crear instrumentos aún es maqueta.</p>
     <div id="migas" class="migas" role="navigation" aria-label="Ubicación"></div>
     <div id="acciones-ops" class="acciones"></div>
 
@@ -159,25 +159,26 @@
       <p class="contexto" id="ctx-mover"></p>
       <label class="campo">Mover a <select id="destino-mover"></select></label>
       <p class="nota" id="nota-mover"></p>
+      <p class="mensaje" id="error-mover" hidden></p>
       <div class="pie">
         <button value="cancelar">Cancelar</button>
-        <button class="primario" value="ok">Mover</button>
+        <button class="primario" value="ok" id="confirmar-mover">Mover</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="d-csv">
     <form method="dialog" class="modal" id="asistente">
-      <h2>Importar CSV de MyInvestor</h2>
+      <h2>Importar CSV</h2>
       <p class="contexto" id="ctx-csv"></p>
       <ol class="pasos" aria-label="Pasos">
         <li class="activo">Fichero</li><li>Vista previa</li><li>Confirmar</li>
       </ol>
 
       <section data-paso="1">
-        <div class="zona-archivo" id="zona-csv">Arrastra aquí el CSV de órdenes<br><span class="nota">o</span><br><button type="button" id="elegir-csv">Elegir fichero</button></div>
+        <div class="zona-archivo" id="zona-csv">Arrastra aquí el CSV de órdenes de MyInvestor o de la Flex Query de Interactive Brokers<br><span class="nota">o</span><br><button type="button" id="elegir-csv">Elegir fichero</button></div>
         <input type="file" id="archivo-csv" accept=".csv,text/csv" hidden>
-        <p class="nota">El ISIN y la divisa se leen del fichero.</p>
+        <p class="nota">El ISIN y la divisa (MyInvestor) o las acciones (Interactive Brokers) se leen del fichero.</p>
       </section>
 
       <section data-paso="2" hidden>
